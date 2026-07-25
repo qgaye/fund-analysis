@@ -224,6 +224,27 @@
               </dl>
             </article>
 
+            <article id="share-class-card" class="profile-card share-class-card" hidden>
+              <div class="profile-card-heading">
+                <span class="section-label">A / C SHARE CLASS</span>
+                <span id="share-class-current">—</span>
+              </div>
+              <div class="share-class-advice">
+                <strong id="share-class-threshold">—</strong>
+                <p id="share-class-summary" class="profile-note">—</p>
+              </div>
+              <dl class="facts-list compact-facts">
+                <div>
+                  <dt>A 类（长期）</dt>
+                  <dd id="share-class-a">—</dd>
+                </div>
+                <div>
+                  <dt>C 类（短期）</dt>
+                  <dd id="share-class-c">—</dd>
+                </div>
+              </dl>
+              <p id="share-class-note" class="profile-note">—</p>
+            </article>
           </div>
         </details>
 
@@ -231,7 +252,7 @@
           <div class="nav-history-heading">
             <div>
               <p class="eyebrow">PERFORMANCE LENS / HOLDING PERIOD</p>
-              <h2>区间收益与净值</h2>
+              <h2>净值与收益全景</h2>
               <p id="nav-chart-subtitle">近一年区间收益走势</p>
             </div>
             <div class="nav-chart-controls">
@@ -249,6 +270,9 @@
                 >
                   区间收益走势
                 </button>
+                <button type="button" data-nav-metric="阶段收益" role="tab">
+                  阶段累计收益
+                </button>
                 <button type="button" data-nav-metric="累计净值" role="tab">
                   累计净值
                 </button>
@@ -257,6 +281,12 @@
                 </button>
                 <button type="button" data-nav-metric="分红记录" role="tab">
                   分红记录
+                </button>
+                <button type="button" data-nav-metric="周期收益" role="tab">
+                  周期收益
+                </button>
+                <button type="button" data-nav-metric="回撤修复" role="tab">
+                  回撤修复
                 </button>
               </div>
               <div
@@ -274,39 +304,6 @@
                 <button type="button" data-nav-range="1m" role="tab">近1个月</button>
                 <button type="button" data-nav-range="custom" role="tab">自定义</button>
               </div>
-            </div>
-          </div>
-
-          <div class="decision-snapshot">
-            <div class="latest-nav-strip" aria-label="最新基金净值">
-              <div>
-                <span>单位净值</span>
-                <strong id="unit-nav">—</strong>
-                <small>人民币 / 元</small>
-              </div>
-              <div id="daily-change" class="latest-daily-change">
-                <span>当日变化</span>
-                <strong>—</strong>
-                <small>较上一净值日</small>
-              </div>
-              <div>
-                <span>累计净值</span>
-                <strong id="cumulative-nav">—</strong>
-                <small>人民币 / 元</small>
-              </div>
-              <div>
-                <span>最新净资产</span>
-                <strong id="snapshot-scale">—</strong>
-                <small>规模数据按最新报告期</small>
-              </div>
-            </div>
-
-            <div class="performance-snapshot">
-              <div class="performance-snapshot-heading">
-                <span class="section-label">PERFORMANCE SNAPSHOT</span>
-                <small>阶段累计收益 / %</small>
-              </div>
-              <div id="performance-chart" class="performance-grid"></div>
             </div>
           </div>
 
@@ -379,6 +376,45 @@
             <div id="no-dividend-history" class="no-dividend-history" hidden>
               所选区间内暂无分红记录。
             </div>
+          </div>
+          <div
+            id="periodic-returns-panel"
+            class="periodic-returns-panel"
+            aria-label="基金周期收益"
+            hidden
+          >
+            <div class="periodic-returns-toolbar">
+              <small id="periodic-returns-subtitle">各自然年内的独立涨跌幅</small>
+              <div
+                id="periodic-returns-switcher"
+                class="periodic-returns-switcher"
+                role="tablist"
+                aria-label="周期收益粒度"
+              >
+                <button type="button" data-periodic-unit="year" role="tab" class="active">
+                  按年
+                </button>
+                <button type="button" data-periodic-unit="month" role="tab">
+                  按月
+                </button>
+              </div>
+            </div>
+            <div id="periodic-returns-grid" class="periodic-returns-grid"></div>
+            <div id="periodic-returns-empty" class="periodic-returns-empty" hidden>
+              暂无足够的净值数据用于计算周期收益。
+            </div>
+          </div>
+          <div
+            id="stage-performance-panel"
+            class="stage-performance-panel"
+            aria-label="阶段累计收益"
+            hidden
+          >
+            <div class="stage-performance-list-heading">
+              <span>阶段</span>
+              <span>累计收益</span>
+            </div>
+            <div id="performance-chart" class="stage-performance-list"></div>
           </div>
           <p id="nav-chart-note" class="nav-chart-note">
             所选区间首日归零，不代表投资者从基金成立日起持有。

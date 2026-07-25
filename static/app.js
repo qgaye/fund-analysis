@@ -18,6 +18,8 @@ let currentCustomRange = { start: "", end: "" };
 let currentInvestmentMode = "single";
 let currentDividends = [];
 let navPlotPoints = [];
+let currentPeriodicUnit = "year";
+let currentPerformance = {};
 
 const palette = [
   "#d33b28",
@@ -40,6 +42,13 @@ const navMetricConfig = {
     tooltipLabel: "区间收益",
     unit: "%",
   },
+  阶段收益: {
+    valueKey: "累计收益率",
+    subtitle: "近 1 天 / 1 月 / 3 月 / 6 月 / 1 年 / 3 年及成立以来的阶段累计收益",
+    note: "阶段累计收益按各标准区间统计，反映从该区间起点持有至今的累计涨跌幅。",
+    tooltipLabel: "阶段收益",
+    unit: "%",
+  },
   累计净值: {
     valueKey: "累计净值",
     subtitle: "将历史现金分红加回后的净值走势",
@@ -60,6 +69,20 @@ const navMetricConfig = {
     note: "分红会使单位净值在除息日相应下降，本身不是额外收益；累计净值用于观察将历史现金分红加回后的走势。",
     tooltipLabel: "分红记录",
     unit: "元",
+  },
+  周期收益: {
+    valueKey: "累计净值",
+    subtitle: "各自然年 / 月内的独立涨跌幅",
+    note: "按累计净值计算，已将现金分红加回；每格代表该自然年 / 月区间内的独立涨跌幅，非累计收益。",
+    tooltipLabel: "周期收益",
+    unit: "%",
+  },
+  回撤修复: {
+    valueKey: "回撤",
+    subtitle: "自历史高点的回撤深度与修复过程",
+    note: "回撤衡量从此前累计净值高点下跌的幅度；0% 表示已创新高（完成修复），数值越低表示距离高点越深。",
+    tooltipLabel: "回撤",
+    unit: "%",
   },
 };
 
@@ -132,31 +155,144 @@ function clearInputError() {
 }
 
 function renderPerformance(performance) {
+  currentPerformance = performance ?? {};
   const chart = document.querySelector("#performance-chart");
-  const periods = ["近1月", "近3月", "近6月", "近1年", "近3年"];
+  const periods = [
+    { label: "近1天", key: "日涨幅" },
+    { label: "近1月", key: "近1月" },
+    { label: "近3月", key: "近3月" },
+    { label: "近6月", key: "近6月" },
+    { label: "近1年", key: "近1年" },
+    { label: "近3年", key: "近3年" },
+    { label: "成立以来", key: "成立以来" },
+  ];
   chart.replaceChildren();
 
-  periods.forEach((period, index) => {
-    const rawValue = performance[period];
+  periods.forEach(({ label: period, key }, index) => {
+    const rawValue = currentPerformance[key];
     const numeric = Number(rawValue);
     const valid = Number.isFinite(numeric);
     const item = document.createElement("div");
     const direction =
       !valid || numeric === 0 ? "neutral" : numeric > 0 ? "positive" : "negative";
-    item.className = `performance-stat ${direction}`;
+    item.className = `stage-performance-row ${direction}`;
     item.style.animationDelay = `${index * 55}ms`;
-
-    const value = document.createElement("strong");
-    value.textContent = valid ? formatPercent(numeric) : "—";
 
     const label = document.createElement("span");
     label.textContent = period;
 
-    const marker = document.createElement("i");
-    marker.setAttribute("aria-hidden", "true");
-    item.append(label, value, marker);
+    const value = document.createElement("strong");
+    value.textContent = valid ? formatPercent(numeric) : "—";
+
+    item.append(label, value);
     chart.append(item);
   });
+}
+
+function computePeriodicReturns(unit) {
+  const rows = (currentNavHistory?.累计净值?.明细 ?? [])
+    .map((row) => ({
+      日期: row.日期,
+      value: Number(row.累计净值),
+    }))
+    .filter((row) => row.日期 && Number.isFinite(row.value))
+    .sort((a, b) => a.日期.localeCompare(b.日期));
+  if (rows.length < 2) return [];
+
+  const keyOf = (isoDate) =>
+    unit === "year" ? isoDate.slice(0, 4) : isoDate.slice(0, 7);
+
+  // 每个自然周期保留首末净值点。
+  const buckets = new Map();
+  rows.forEach((row) => {
+    const key = keyOf(row.日期);
+    const bucket = buckets.get(key);
+    if (!bucket) {
+      buckets.set(key, { key, first: row, last: row });
+    } else {
+      bucket.last = row;
+    }
+  });
+
+  const ordered = [...buckets.values()].sort((a, b) =>
+    a.key.localeCompare(b.key),
+  );
+  return ordered.map((bucket, index) => {
+    // 以上一周期期末净值为基准，衔接跨期涨跌；首个周期回退到本周期期初。
+    const base =
+      index > 0 ? ordered[index - 1].last.value : bucket.first.value;
+    const change =
+      Number.isFinite(base) && base !== 0
+        ? (bucket.last.value / base - 1) * 100
+        : null;
+    return {
+      key: bucket.key,
+      label:
+        unit === "year"
+          ? `${bucket.key}年`
+          : `${bucket.key.slice(0, 4)}/${bucket.key.slice(5, 7)}`,
+      change,
+      partial: index === 0,
+    };
+  });
+}
+
+function renderPeriodicReturns(unit = currentPeriodicUnit) {
+  currentPeriodicUnit = unit;
+  const grid = document.querySelector("#periodic-returns-grid");
+  const empty = document.querySelector("#periodic-returns-empty");
+  grid.replaceChildren();
+
+  document.querySelectorAll("[data-periodic-unit]").forEach((button) => {
+    const active = button.dataset.periodicUnit === unit;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  text(
+    "#periodic-returns-subtitle",
+    unit === "year" ? "各自然年内的独立涨跌幅" : "各自然月内的独立涨跌幅",
+  );
+
+  let entries = computePeriodicReturns(unit);
+  if (unit === "month") entries = entries.slice(-24);
+
+  if (!entries.length) {
+    empty.hidden = false;
+    return;
+  }
+  empty.hidden = true;
+
+  entries
+    .slice()
+    .reverse()
+    .forEach((entry, index) => {
+      const numeric = entry.change;
+      const valid = Number.isFinite(numeric);
+      const direction =
+        !valid || numeric === 0
+          ? "neutral"
+          : numeric > 0
+            ? "positive"
+            : "negative";
+      const item = document.createElement("div");
+      item.className = `periodic-stat ${direction}`;
+      item.style.animationDelay = `${Math.min(index * 40, 480)}ms`;
+
+      const label = document.createElement("span");
+      label.textContent = entry.label;
+
+      const value = document.createElement("strong");
+      value.textContent = valid ? formatPercent(numeric) : "—";
+
+      const marker = document.createElement("i");
+      marker.setAttribute("aria-hidden", "true");
+
+      item.append(label, value, marker);
+      if (entry.partial) {
+        item.title = `${entry.label}为区间起点，涨跌幅以本期首个净值为基准。`;
+      }
+      grid.append(item);
+    });
 }
 
 function svgNode(name, attributes = {}) {
@@ -238,6 +374,22 @@ function customReturnRows() {
   }));
 }
 
+function computeDrawdownRows(range) {
+  const source = currentNavHistory?.累计净值?.明细 ?? [];
+  const rows =
+    range === "custom" ? filterCustomRows(source) : filterNavRows(source, range);
+  let peak = -Infinity;
+  return rows
+    .map((row) => {
+      const nav = Number(row.累计净值);
+      if (!Number.isFinite(nav)) return null;
+      if (nav > peak) peak = nav;
+      const drawdown = peak > 0 ? (nav / peak - 1) * 100 : 0;
+      return { 日期: row.日期, 回撤: drawdown };
+    })
+    .filter(Boolean);
+}
+
 function navRowsFor(metric, range) {
   if (metric === "分红记录") {
     const rows = currentDividends.map((row) => ({
@@ -247,6 +399,9 @@ function navRowsFor(metric, range) {
     return range === "custom"
       ? filterCustomRows(rows)
       : filterNavRows(rows, range);
+  }
+  if (metric === "回撤修复") {
+    return computeDrawdownRows(range);
   }
   if (range === "custom") {
     return metric === "累计收益率"
@@ -380,7 +535,7 @@ function showCustomRangeError(message = "") {
 }
 
 function formatNavValue(value, metric = currentNavMetric, axis = false) {
-  if (metric === "累计收益率") {
+  if (metric === "累计收益率" || metric === "回撤修复") {
     return axis ? `${Number(value).toFixed(2)}%` : formatPercent(value);
   }
   return formatNumber(value, 4);
@@ -397,8 +552,11 @@ function renderNavChart(
   const svg = document.querySelector("#nav-history-chart");
   const chartShell = document.querySelector("#nav-chart-shell");
   const dividendPanel = document.querySelector("#dividend-history-panel");
+  const periodicPanel = document.querySelector("#periodic-returns-panel");
+  const stagePanel = document.querySelector("#stage-performance-panel");
   const noData = document.querySelector("#no-nav-history");
   const tooltip = document.querySelector("#nav-chart-tooltip");
+  const summary = document.querySelector(".nav-history-summary");
   const rows = navRowsFor(metric, range);
   const values = rows
     .map((row) => Number(row[config.valueKey]))
@@ -406,10 +564,17 @@ function renderNavChart(
   svg.replaceChildren();
   tooltip.hidden = true;
   navPlotPoints = [];
-  customPanel.hidden = range !== "custom";
   const isDividendView = metric === "分红记录";
-  chartShell.hidden = isDividendView;
+  const isPeriodicView = metric === "周期收益";
+  const isStageView = metric === "阶段收益";
+  customPanel.hidden = range !== "custom" || isPeriodicView || isStageView;
+  chartShell.hidden = isDividendView || isPeriodicView || isStageView;
   dividendPanel.hidden = !isDividendView;
+  periodicPanel.hidden = !isPeriodicView;
+  stagePanel.hidden = !isStageView;
+  summary.hidden = isPeriodicView || isStageView;
+  document.querySelector("#nav-range-switcher").hidden =
+    isPeriodicView || isStageView;
 
   document.querySelectorAll("[data-nav-range]").forEach((button) => {
     const active = button.dataset.navRange === range;
@@ -423,27 +588,52 @@ function renderNavChart(
   });
   text(
     "#nav-chart-subtitle",
-    range === "custom" ? `自定义区间 · ${config.subtitle}` : config.subtitle,
+    range === "custom" && !isPeriodicView && !isStageView
+      ? `自定义区间 · ${config.subtitle}`
+      : config.subtitle,
   );
   text("#nav-chart-note", config.note);
+  if (isStageView) {
+    noData.hidden = true;
+    renderPerformance(currentPerformance);
+    return;
+  }
+  if (isPeriodicView) {
+    noData.hidden = true;
+    renderPeriodicReturns(currentPeriodicUnit);
+    return;
+  }
   if (isDividendView) {
     noData.hidden = true;
     if (range === "custom") showCustomRangeError();
     renderDividendHistory(rows);
     return;
   }
+  const isDrawdownView = metric === "回撤修复";
   text(
     "#nav-range-change-label",
-    metric === "累计收益率" ? "区间收益" : "首末变化",
+    isDrawdownView
+      ? "当前回撤"
+      : metric === "累计收益率"
+        ? "区间收益"
+        : "首末变化",
   );
   text("#nav-range-dates-label", "覆盖日期");
   text(
     "#nav-range-high-label",
-    metric === "累计收益率" ? "收益率最高" : "区间最高",
+    isDrawdownView
+      ? "区间最大回撤"
+      : metric === "累计收益率"
+        ? "收益率最高"
+        : "区间最高",
   );
   text(
     "#nav-range-low-label",
-    metric === "累计收益率" ? "收益率最低" : "区间最低",
+    isDrawdownView
+      ? "修复状态"
+      : metric === "累计收益率"
+        ? "收益率最低"
+        : "区间最低",
   );
 
   if (rows.length < 2 || values.length < 2) {
@@ -633,11 +823,33 @@ function renderNavChart(
 
   const firstValue = Number(rows[0][config.valueKey]);
   const lastValue = Number(rows.at(-1)[config.valueKey]);
+  const changeElement = document.querySelector("#nav-range-change");
+  if (isDrawdownView) {
+    const currentDrawdown = lastValue;
+    const maxDrawdown = Math.min(...values);
+    changeElement.textContent = formatPercent(currentDrawdown);
+    changeElement.className = movementClass(currentDrawdown);
+    text("#nav-range-high", formatPercent(maxDrawdown));
+    text(
+      "#nav-range-low",
+      currentDrawdown >= -0.005 ? "已创新高" : "修复中",
+    );
+    text(
+      "#nav-range-dates",
+      `${formatChartDate(rows[0].日期)} — ${formatChartDate(rows.at(-1).日期)}`,
+    );
+    svg.setAttribute(
+      "aria-label",
+      `${formatChartDate(rows[0].日期)}至${formatChartDate(
+        rows.at(-1).日期,
+      )}的回撤曲线，最大回撤${formatPercent(maxDrawdown)}`,
+    );
+    return;
+  }
   const periodChange =
     metric === "累计收益率"
       ? lastValue - firstValue
       : ((lastValue / firstValue) - 1) * 100;
-  const changeElement = document.querySelector("#nav-range-change");
   changeElement.textContent = formatPercent(periodChange);
   changeElement.className = movementClass(periodChange);
   text("#nav-range-high", formatNavValue(Math.max(...values), metric));
@@ -1428,7 +1640,6 @@ function renderFundProfile(basic) {
   text("#founded-date", basic.成立日期 ?? basic.成立日);
   text("#fund-age", basic.成立时间);
   text("#fund-scale", scale.最新净资产);
-  text("#snapshot-scale", scale.最新净资产);
   text("#profile-summary-age", basic.成立时间);
   text("#profile-summary-manager", basic.管理人);
   const managementRate = Number(
@@ -1552,9 +1763,39 @@ function renderFundProfile(basic) {
   text("#purchase-fee-note", purchaseFee.说明);
 }
 
+function renderShareClassAdvice(advice) {
+  const card = document.querySelector("#share-class-card");
+  if (!advice || !advice.可用) {
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+
+  const a = advice.A类 ?? {};
+  const c = advice.C类 ?? {};
+  text(
+    "#share-class-current",
+    advice.当前份额 ? `当前查看 ${advice.当前份额} 类` : "—",
+  );
+
+  const threshold = advice.临界持有天数;
+  text("#share-class-threshold", threshold ? `${threshold} 天` : "长期持有");
+  text("#share-class-summary", advice.建议);
+
+  const aRate =
+    a.申购费率 != null ? `申购费 ${a.申购费率}%` : "申购费未知";
+  text("#share-class-a", `${a.名称 ?? "—"}（${a.代码 ?? "—"}） · ${aRate}`);
+  const cRate =
+    c.年销售服务费率 != null
+      ? `销售服务费 ${c.年销售服务费率}%/年`
+      : "销售服务费未知";
+  text("#share-class-c", `${c.名称 ?? "—"}（${c.代码 ?? "—"}） · ${cRate}`);
+
+  text("#share-class-note", advice.说明);
+}
+
 function renderFund(data) {
   const basic = data.基础资料 ?? {};
-  const nav = data.净值信息 ?? {};
   const performance = data.历史业绩 ?? {};
   const source = data.数据来源 ?? {};
 
@@ -1574,17 +1815,11 @@ function renderFund(data) {
       : "查询时间未知",
   );
 
-  text("#unit-nav", formatNumber(nav.单位净值));
-  text("#cumulative-nav", formatNumber(nav.累计净值));
-
-  const dailyChange = document.querySelector("#daily-change strong");
-  dailyChange.textContent = formatPercent(performance.日涨幅);
-  dailyChange.className = movementClass(performance.日涨幅);
-
   text("#manager", basic.管理人);
   text("#custodian", basic.托管人);
   text("#management-fee", basic.管理费率);
   text("#custodian-fee", basic.托管费率);
+  renderShareClassAdvice(basic.AC份额建议);
   text("#benchmark", basic.业绩比较基准);
   document.querySelector("#benchmark").title =
     basic.业绩比较基准 ?? "业绩比较基准暂无";
@@ -1656,6 +1891,12 @@ document.querySelectorAll("[data-nav-range]").forEach((button) => {
 document.querySelectorAll("[data-nav-metric]").forEach((button) => {
   button.addEventListener("click", () =>
     renderNavChart(currentNavRange, button.dataset.navMetric),
+  );
+});
+
+document.querySelectorAll("[data-periodic-unit]").forEach((button) => {
+  button.addEventListener("click", () =>
+    renderPeriodicReturns(button.dataset.periodicUnit),
   );
 });
 

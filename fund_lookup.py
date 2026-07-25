@@ -290,6 +290,189 @@ def _load_purchase_fee(code: str, warnings: list[str]) -> dict[str, Any]:
     return fees
 
 
+@lru_cache(maxsize=1)
+def _fund_name_directory() -> pd.DataFrame:
+    """全量基金名录（代码 / 简称 / 类型），用于 A/C 份额配对。"""
+    frame = ak.fund_name_em()
+    if frame is None or frame.empty:
+        return pd.DataFrame(columns=["基金代码", "基金简称", "基金类型"])
+    frame = frame.copy()
+    frame["基金代码"] = (
+        frame["基金代码"].astype("string").str.extract(r"(\d{6})", expand=False)
+    )
+    return frame.dropna(subset=["基金代码"])
+
+
+# A / C 后缀识别：匹配名称结尾的份额类别标记，如 “……混合A”“……债券C”。
+_SHARE_CLASS_PATTERN = re.compile(r"^(?P<base>.+?)([ 　\-]*)(?P<cls>[AC])$")
+
+
+def _split_share_class(name: str) -> tuple[str, str] | None:
+    """把基金简称拆成 (基名, 份额类别)。无法识别则返回 None。"""
+    cleaned = re.sub(r"\s+", "", str(name or ""))
+    if not cleaned:
+        return None
+    match = _SHARE_CLASS_PATTERN.match(cleaned)
+    if not match:
+        return None
+    return match.group("base"), match.group("cls")
+
+
+def _find_share_class_sibling(
+    code: str, fund_name: str, warnings: list[str]
+) -> dict[str, Any] | None:
+    """根据基金简称的 A/C 后缀，查找配对的另一类份额。"""
+    parsed = _split_share_class(fund_name)
+    if not parsed:
+        return None
+    base_name, current_cls = parsed
+    sibling_cls = "C" if current_cls == "A" else "A"
+    try:
+        directory = _fund_name_directory()
+    except Exception as exc:  # AKShare 名录接口异常
+        warnings.append(f"A/C 份额配对失败：{exc}")
+        return None
+
+    for _, row in directory.iterrows():
+        candidate_code = str(row["基金代码"])
+        if candidate_code == code:
+            continue
+        candidate = _split_share_class(row["基金简称"])
+        if not candidate:
+            continue
+        cand_base, cand_cls = candidate
+        if cand_base == base_name and cand_cls == sibling_cls:
+            return {
+                "代码": candidate_code,
+                "名称": _clean(row["基金简称"]),
+                "类别": sibling_cls,
+            }
+    return None
+
+
+def _load_sales_service_fee_rate(code: str, warnings: list[str]) -> float | None:
+    """从东财费率页“运作费用”表提取年销售服务费率（百分比数值）。"""
+    try:
+        response = requests.get(
+            f"https://fundf10.eastmoney.com/jjfl_{code}.html",
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=20,
+        )
+        response.raise_for_status()
+        response.encoding = response.apparent_encoding or "utf-8"
+    except Exception as exc:
+        warnings.append(f"销售服务费获取失败：{exc}")
+        return None
+
+    # 原始 HTML 里“销售服务费率”与数值间夹着表格标签，需先转成纯文本再匹配。
+    text = BeautifulSoup(response.text, "html.parser").get_text(" ", strip=True)
+    match = re.search(r"销售服务费率[^\d%]*([\d.]+)\s*%", text)
+    if not match:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return None
+
+
+def _first_percent(*values: Any) -> float | None:
+    """从费率文本里取第一个百分比数值，如 “0.15%” -> 0.15。"""
+    for value in values:
+        match = re.search(r"([\d.]+)\s*%", str(value or ""))
+        if match:
+            try:
+                return float(match.group(1))
+            except ValueError:
+                continue
+    return None
+
+
+def _build_share_class_advice(
+    code: str,
+    fund_name: str,
+    current_purchase_fee: dict[str, Any],
+    warnings: list[str],
+) -> dict[str, Any] | None:
+    """构建 A/C 份额选择建议：定位配对份额并测算临界持有天数。"""
+    parsed = _split_share_class(fund_name)
+    if not parsed:
+        return None
+    current_cls = parsed[1]
+    sibling = _find_share_class_sibling(code, fund_name, warnings)
+    if not sibling:
+        return None
+
+    sibling_code = sibling["代码"]
+    sibling_purchase_fee = _load_purchase_fee(sibling_code, warnings)
+
+    # 归类出 A 类与 C 类各自的代码、名称、申购费明细。
+    classes = {
+        current_cls: {
+            "代码": code,
+            "名称": fund_name,
+            "申购费": current_purchase_fee,
+        },
+        sibling["类别"]: {
+            "代码": sibling_code,
+            "名称": sibling["名称"],
+            "申购费": sibling_purchase_fee,
+        },
+    }
+    a_info = classes.get("A")
+    c_info = classes.get("C")
+    if not a_info or not c_info:
+        return None
+
+    # A 类首档申购费率（优先渠道优惠费率）。
+    a_rows = (a_info["申购费"] or {}).get("明细") or []
+    a_purchase_rate = None
+    if a_rows:
+        a_purchase_rate = _first_percent(
+            a_rows[0].get("天天基金优惠费率"), a_rows[0].get("原费率")
+        )
+    # C 类年销售服务费率。
+    c_sales_rate = _load_sales_service_fee_rate(c_info["代码"], warnings)
+
+    threshold_days = None
+    if a_purchase_rate and c_sales_rate and c_sales_rate > 0:
+        # 临界天数：A 类一次性申购费 == C 类持有期销售服务费累计。
+        threshold_days = round(a_purchase_rate / (c_sales_rate / 365))
+
+    if threshold_days:
+        summary = (
+            f"预计持有超过约 {threshold_days} 天时，A 类（{a_info['名称']}）"
+            f"综合成本更低；短于该天数则 C 类（{c_info['名称']}）更划算。"
+        )
+    else:
+        summary = (
+            f"已找到配对份额：A 类 {a_info['名称']}（{a_info['代码']}）、"
+            f"C 类 {c_info['名称']}（{c_info['代码']}）。"
+            "因费率数据不足，暂无法测算精确临界天数——"
+            "通常长期持有选 A 类、短期持有选 C 类。"
+        )
+
+    return {
+        "可用": True,
+        "当前份额": current_cls,
+        "A类": {
+            "代码": a_info["代码"],
+            "名称": a_info["名称"],
+            "申购费率": a_purchase_rate,
+        },
+        "C类": {
+            "代码": c_info["代码"],
+            "名称": c_info["名称"],
+            "年销售服务费率": c_sales_rate,
+        },
+        "临界持有天数": threshold_days,
+        "建议": summary,
+        "说明": (
+            "临界天数按 A 类优惠申购费率与 C 类年销售服务费率估算，"
+            "未计入赎回费与持有期收益差异，实际以购买平台费率为准。"
+        ),
+    }
+
+
 def _find_code_row(frame: pd.DataFrame, code: str) -> dict[str, Any]:
     if frame.empty or "基金代码" not in frame.columns:
         return {}
@@ -981,7 +1164,7 @@ def _fallback_performance(
     if not achievement.empty and {"周期", "本产品区间收益"}.issubset(
         achievement.columns
     ):
-        for period in ("近1月", "近3月", "近6月", "近1年", "近3年"):
+        for period in ("近1月", "近3月", "近6月", "近1年", "近3年", "成立以来"):
             rows = achievement.loc[achievement["周期"].astype(str) == period]
             if not rows.empty:
                 performance[period] = _clean(rows.iloc[0]["本产品区间收益"])
@@ -1133,6 +1316,13 @@ def get_fund_data(
     }
     dividends = _dividend_history(nav_frames["分红"])
 
+    if performance.get("成立以来") is None:
+        inception_curve = cumulative_returns.get("all") or []
+        if inception_curve:
+            performance["成立以来"] = _clean(
+                inception_curve[-1].get("累计收益率")
+            )
+
     stock_holdings_frame = _safe_call(
         "股票持仓",
         ak.fund_portfolio_hold_em,
@@ -1240,6 +1430,12 @@ def get_fund_data(
     if not any((basic["名称"], net_value["单位净值"], primary_holdings)):
         details = "；".join(warnings[-3:]) if warnings else "AKShare 未返回数据"
         raise FundLookupError(f"未找到基金 {code}：{details}")
+
+    share_class_advice = _build_share_class_advice(
+        code, str(basic["名称"] or ""), purchase_fee, warnings
+    )
+    if share_class_advice:
+        basic["AC份额建议"] = share_class_advice
 
     return {
         "基础资料": basic,
