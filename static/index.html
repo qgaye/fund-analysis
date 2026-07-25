@@ -1,0 +1,634 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="输入基金代码，查看基金基础资料、净值、阶段业绩与最新持仓。"
+    />
+    <title>基金透镜 · Fund Lens</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%23f1eddf' stroke='%23151916' stroke-width='3'/%3E%3Ctext x='32' y='38' text-anchor='middle' font-family='serif' font-size='18' font-weight='700' fill='%23151916'%3EFL%3C/text%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="paper-noise" aria-hidden="true"></div>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="基金透镜首页">
+        <span class="brand-mark">FL</span>
+        <span>
+          <strong>基金透镜</strong>
+          <small>FUND LENS / CN</small>
+        </span>
+      </a>
+      <div class="live-stamp">
+        <span class="pulse-dot"></span>
+        AKShare 数据
+      </div>
+    </header>
+
+    <main>
+      <section class="hero" id="search-section">
+        <div class="hero-index" aria-hidden="true">01</div>
+        <div class="hero-copy">
+          <p class="eyebrow">PUBLIC FUND RESEARCH TERMINAL</p>
+          <h1>一个代码，<br />看清一只基金。</h1>
+          <p class="hero-description">
+            汇集基础档案、最新净值、阶段收益与季度持仓。
+            数据来自 AKShare 聚合的公开信息。
+          </p>
+        </div>
+
+        <div class="search-panel">
+          <form id="fund-form" novalidate>
+            <label for="fund-code">基金代码</label>
+            <div class="input-row">
+              <input
+                id="fund-code"
+                name="fund-code"
+                type="text"
+                inputmode="numeric"
+                autocomplete="off"
+                maxlength="6"
+                pattern="[0-9]{6}"
+                placeholder="例如 000001"
+                aria-describedby="input-help"
+              />
+              <button type="submit">
+                <span>查询基金</span>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M5 12h13M13 6l6 6-6 6" />
+                </svg>
+              </button>
+            </div>
+            <p id="input-help" class="input-help">
+              输入完整的六位基金代码
+            </p>
+          </form>
+          <div class="quick-search" aria-label="示例基金">
+            <span>快速查看</span>
+            <button type="button" data-code="000001">000001</button>
+            <button type="button" data-code="510300">510300</button>
+            <button type="button" data-code="159915">159915</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="loading-state" class="loading-state" hidden aria-live="polite">
+        <div class="loading-orbit">
+          <span></span>
+          <span></span>
+          <strong>读取</strong>
+        </div>
+        <div>
+          <p class="eyebrow">CONNECTING TO DATA SOURCE</p>
+          <h2>正在穿透基金档案…</h2>
+          <p>AKShare 上游查询通常需要几秒钟。</p>
+        </div>
+      </section>
+
+      <section id="error-state" class="error-state" hidden role="alert">
+        <span class="error-code">!</span>
+        <div>
+          <p class="eyebrow">QUERY INTERRUPTED</p>
+          <h2>这次没有拿到数据</h2>
+          <p id="error-message"></p>
+        </div>
+      </section>
+
+      <section id="results" class="results" hidden aria-live="polite">
+        <header class="fund-header">
+          <div>
+            <p class="eyebrow">FUND PROFILE / 基金档案</p>
+            <div class="title-line">
+              <h2 id="fund-name">—</h2>
+              <span id="fund-code-badge" class="code-badge">000000</span>
+            </div>
+            <div class="fund-tags">
+              <span id="fund-type">—</span>
+              <span id="fund-date">成立于 —</span>
+              <span id="query-time">更新于 —</span>
+            </div>
+            <div class="fund-benchmark-summary">
+              <span>业绩比较基准</span>
+              <strong id="benchmark">—</strong>
+            </div>
+          </div>
+          <button id="refresh-button" class="refresh-button" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7" />
+            </svg>
+            刷新数据
+          </button>
+        </header>
+
+        <details class="fund-profile-section compact-profile" aria-labelledby="fund-profile-title">
+          <summary class="compact-profile-summary">
+            <div>
+              <p class="eyebrow">FULL PROFILE / FEES / OWNERSHIP</p>
+              <h2 id="fund-profile-title">完整基金档案</h2>
+            </div>
+            <div class="compact-profile-summary-metrics">
+              <span>成立 <strong id="profile-summary-age">—</strong></span>
+              <span>管理人 <strong id="profile-summary-manager">—</strong></span>
+              <span>运作费 <strong id="profile-summary-cost">—</strong></span>
+              <i aria-hidden="true"></i>
+            </div>
+          </summary>
+
+          <div class="fund-profile-grid">
+            <article class="profile-card scale-card">
+              <div class="profile-card-heading">
+                <span class="section-label">LIFECYCLE &amp; SCALE</span>
+                <span id="fund-scale-date">—</span>
+              </div>
+              <div class="profile-lead">
+                <span>最新净资产</span>
+                <strong id="fund-scale">—</strong>
+              </div>
+              <dl class="profile-facts">
+                <div>
+                  <dt>成立日期</dt>
+                  <dd id="founded-date">—</dd>
+                </div>
+                <div>
+                  <dt>成立时间</dt>
+                  <dd id="fund-age">—</dd>
+                </div>
+                <div>
+                  <dt>最新份额</dt>
+                  <dd id="fund-shares">—</dd>
+                </div>
+                <div>
+                  <dt>成立份额</dt>
+                  <dd id="founded-scale">—</dd>
+                </div>
+              </dl>
+            </article>
+
+            <article class="profile-card holder-card">
+              <div class="profile-card-heading">
+                <span class="section-label">HOLDER STRUCTURE</span>
+                <span id="holder-period">—</span>
+              </div>
+              <div
+                id="holder-bar"
+                class="holder-bar"
+                role="img"
+                aria-label="基金个人和机构持有比例"
+              >
+                <i id="institution-bar"></i>
+                <i id="individual-bar"></i>
+              </div>
+              <div class="holder-values">
+                <div>
+                  <span><i></i>机构持有</span>
+                  <strong id="institution-share">—</strong>
+                </div>
+                <div>
+                  <span><i></i>个人持有</span>
+                  <strong id="individual-share">—</strong>
+                </div>
+              </div>
+              <p id="holder-note" class="profile-note">—</p>
+            </article>
+
+            <article class="profile-card fee-card">
+              <div class="profile-card-heading">
+                <span class="section-label">PURCHASE FEE</span>
+                <span id="purchase-fee-method">—</span>
+              </div>
+              <div class="profile-lead fee-lead">
+                <span id="purchase-fee-lead-label">最低金额档买入费率</span>
+                <strong id="purchase-fee-lead">—</strong>
+              </div>
+              <div id="purchase-fee-list" class="purchase-fee-list"></div>
+              <p id="purchase-fee-note" class="profile-note">—</p>
+            </article>
+          </div>
+
+          <div class="profile-research-grid">
+            <article class="profile-card management-card">
+              <div class="profile-card-heading">
+                <span class="section-label">MANAGEMENT &amp; COST</span>
+                <span>持续运作费率</span>
+              </div>
+              <dl class="facts-list compact-facts">
+                <div><dt>基金管理人</dt><dd id="manager">—</dd></div>
+                <div><dt>基金托管人</dt><dd id="custodian">—</dd></div>
+                <div><dt>管理费率</dt><dd id="management-fee">—</dd></div>
+                <div><dt>托管费率</dt><dd id="custodian-fee">—</dd></div>
+              </dl>
+            </article>
+
+          </div>
+        </details>
+
+        <section class="nav-history-section">
+          <div class="nav-history-heading">
+            <div>
+              <p class="eyebrow">PERFORMANCE LENS / HOLDING PERIOD</p>
+              <h2>区间收益与净值</h2>
+              <p id="nav-chart-subtitle">近一年区间收益走势</p>
+            </div>
+            <div class="nav-chart-controls">
+              <div
+                id="nav-metric-switcher"
+                class="metric-switcher"
+                role="tablist"
+                aria-label="净值曲线指标"
+              >
+                <button
+                  type="button"
+                  data-nav-metric="累计收益率"
+                  role="tab"
+                  class="active"
+                >
+                  区间收益走势
+                </button>
+                <button type="button" data-nav-metric="累计净值" role="tab">
+                  累计净值
+                </button>
+                <button type="button" data-nav-metric="单位净值" role="tab">
+                  单位净值
+                </button>
+                <button type="button" data-nav-metric="分红记录" role="tab">
+                  分红记录
+                </button>
+              </div>
+              <div
+                id="nav-range-switcher"
+                class="range-switcher"
+                role="tablist"
+                aria-label="净值曲线时间区间"
+              >
+                <button type="button" data-nav-range="all" role="tab">成立以来</button>
+                <button type="button" data-nav-range="5y" role="tab">近5年</button>
+                <button type="button" data-nav-range="3y" role="tab">近3年</button>
+                <button type="button" data-nav-range="1y" role="tab" class="active">近1年</button>
+                <button type="button" data-nav-range="6m" role="tab">近6个月</button>
+                <button type="button" data-nav-range="3m" role="tab">近3个月</button>
+                <button type="button" data-nav-range="1m" role="tab">近1个月</button>
+                <button type="button" data-nav-range="custom" role="tab">自定义</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="decision-snapshot">
+            <div class="latest-nav-strip" aria-label="最新基金净值">
+              <div>
+                <span>单位净值</span>
+                <strong id="unit-nav">—</strong>
+                <small>人民币 / 元</small>
+              </div>
+              <div id="daily-change" class="latest-daily-change">
+                <span>当日变化</span>
+                <strong>—</strong>
+                <small>较上一净值日</small>
+              </div>
+              <div>
+                <span>累计净值</span>
+                <strong id="cumulative-nav">—</strong>
+                <small>人民币 / 元</small>
+              </div>
+              <div>
+                <span>最新净资产</span>
+                <strong id="snapshot-scale">—</strong>
+                <small>规模数据按最新报告期</small>
+              </div>
+            </div>
+
+            <div class="performance-snapshot">
+              <div class="performance-snapshot-heading">
+                <span class="section-label">PERFORMANCE SNAPSHOT</span>
+                <small>阶段累计收益 / %</small>
+              </div>
+              <div id="performance-chart" class="performance-grid"></div>
+            </div>
+          </div>
+
+          <form id="nav-custom-range" class="nav-custom-range" hidden>
+            <div class="custom-range-intro">
+              <span class="section-label">CUSTOM HOLDING WINDOW</span>
+              <strong>定义观察区间</strong>
+              <small id="custom-range-available">—</small>
+            </div>
+            <label>
+              <span>开始日期</span>
+              <input id="custom-range-start" type="date" required />
+            </label>
+            <i aria-hidden="true">→</i>
+            <label>
+              <span>结束日期</span>
+              <input id="custom-range-end" type="date" required />
+            </label>
+            <button type="submit">应用区间</button>
+            <p id="custom-range-error" role="alert" hidden></p>
+          </form>
+
+          <div class="nav-history-summary">
+            <div>
+              <span id="nav-range-change-label">区间收益</span>
+              <strong id="nav-range-change">—</strong>
+            </div>
+            <div>
+              <span id="nav-range-high-label">区间最高</span>
+              <strong id="nav-range-high">—</strong>
+            </div>
+            <div>
+              <span id="nav-range-low-label">区间最低</span>
+              <strong id="nav-range-low">—</strong>
+            </div>
+            <div>
+              <span id="nav-range-dates-label">覆盖日期</span>
+              <strong id="nav-range-dates">—</strong>
+            </div>
+          </div>
+
+          <div id="nav-chart-shell" class="nav-chart-shell">
+            <svg
+              id="nav-history-chart"
+              viewBox="0 0 1000 360"
+              preserveAspectRatio="none"
+              role="img"
+              aria-label="基金单位净值曲线"
+            ></svg>
+            <div id="nav-chart-tooltip" class="nav-chart-tooltip" hidden>
+              <span></span>
+              <strong></strong>
+            </div>
+            <div id="no-nav-history" class="no-nav-history" hidden>
+              暂无可用的历史净值数据。
+            </div>
+          </div>
+          <div
+            id="dividend-history-panel"
+            class="dividend-history-panel"
+            aria-label="基金分红记录"
+            hidden
+          >
+            <div class="dividend-list-heading">
+              <span>除息日期</span>
+              <span>每份现金分红</span>
+              <span>公告说明</span>
+            </div>
+            <div id="dividend-history-list" class="dividend-history-list"></div>
+            <div id="no-dividend-history" class="no-dividend-history" hidden>
+              所选区间内暂无分红记录。
+            </div>
+          </div>
+          <p id="nav-chart-note" class="nav-chart-note">
+            所选区间首日归零，不代表投资者从基金成立日起持有。
+          </p>
+
+          <details class="holding-simulator">
+            <summary class="simulator-summary">
+              <span>
+                <small>PERSONAL HOLDING VIEW</small>
+                <strong>模拟持有</strong>
+              </span>
+              <span class="simulator-summary-action">
+                <span>单次买入 / 定期投入</span>
+                <i aria-hidden="true"></i>
+              </span>
+            </summary>
+            <div class="simulator-body">
+              <div class="simulator-intro">
+              <div
+                id="simulator-mode-switcher"
+                class="simulator-mode-switcher"
+                role="tablist"
+                aria-label="模拟投入方式"
+              >
+                <button
+                  type="button"
+                  data-simulator-mode="single"
+                  role="tab"
+                  class="active"
+                >
+                  单次买入
+                </button>
+                <button
+                  type="button"
+                  data-simulator-mode="recurring"
+                  role="tab"
+                >
+                  定期投入
+                </button>
+              </div>
+              <p id="simulator-description">
+                假设在选定日期一次性买入并持有至最新净值日，查看更贴近个人持有期的收益。
+              </p>
+              </div>
+              <form id="holding-simulator-form" class="simulator-form">
+              <label>
+                <span id="investment-date-label">买入日期</span>
+                <input id="holding-start-date" type="date" required />
+              </label>
+              <label>
+                <span id="investment-amount-label">买入金额</span>
+                <div class="amount-input">
+                  <b>¥</b>
+                  <input
+                    id="holding-amount"
+                    type="number"
+                    min="100"
+                    step="100"
+                    value="10000"
+                    required
+                  />
+                </div>
+              </label>
+              <label id="investment-frequency-field" hidden>
+                <span>投入频率</span>
+                <select id="investment-frequency">
+                  <option value="monthly">每月一次</option>
+                  <option value="weekly">每周一次</option>
+                </select>
+              </label>
+              <button id="holding-simulator-submit" type="submit">
+                计算持有结果
+              </button>
+              </form>
+              <div id="holding-simulation-results" class="simulation-results">
+              <div>
+                <span>累计投入</span>
+                <strong id="holding-invested">—</strong>
+              </div>
+              <div>
+                <span id="investment-count-label">买入次数</span>
+                <strong id="investment-count">—</strong>
+              </div>
+              <div>
+                <span>持有收益率</span>
+                <strong id="holding-return">—</strong>
+              </div>
+              <div>
+                <span>模拟盈亏</span>
+                <strong id="holding-profit">—</strong>
+              </div>
+              <div>
+                <span>模拟期末价值</span>
+                <strong id="holding-end-value">—</strong>
+              </div>
+              <div>
+                <span>实际计价区间</span>
+                <strong id="holding-period">—</strong>
+              </div>
+              </div>
+              <p id="holding-simulator-note" class="simulator-note">
+                按单位净值和现金分红估算；不计申购、赎回费用。
+              </p>
+            </div>
+          </details>
+        </section>
+
+        <section class="holdings-section">
+          <div class="holdings-heading">
+            <div>
+              <p class="eyebrow">PORTFOLIO DISCLOSURE</p>
+              <h2>最新基金持仓</h2>
+              <p id="holdings-period">—</p>
+              <p id="holdings-context" class="holdings-context" hidden></p>
+            </div>
+            <div class="holdings-summary">
+              <div id="holdings-tabs" class="holdings-tabs" hidden></div>
+              <div class="holdings-count">
+                <strong id="holdings-count">0</strong>
+                <span>项披露持仓</span>
+              </div>
+            </div>
+          </div>
+
+          <div id="holdings-content" class="holdings-content">
+            <article class="asset-allocation-panel">
+              <header class="asset-allocation-heading">
+                <div>
+                  <span class="section-label">ASSET ALLOCATION</span>
+                  <h3>资产分布</h3>
+                </div>
+                <div class="asset-allocation-period">
+                  <strong id="asset-allocation-period">—</strong>
+                  <span>占基金总资产</span>
+                </div>
+              </header>
+              <div
+                id="asset-allocation-bar"
+                class="asset-allocation-bar"
+                role="img"
+                aria-label="基金资产分布"
+              ></div>
+              <div
+                id="asset-allocation-stats"
+                class="asset-allocation-stats"
+              ></div>
+              <p id="asset-allocation-note" class="matrix-note">
+                资产分布来自基金最新季度报告。
+              </p>
+            </article>
+
+            <div class="portfolio-matrices">
+              <article class="treemap-panel">
+                <header class="treemap-heading">
+                  <div>
+                    <span class="section-label">SECURITY MAP</span>
+                    <h3 id="security-map-title">证券持仓矩阵</h3>
+                  </div>
+                  <div class="matrix-total">
+                    <strong id="top-holdings-share">0%</strong>
+                    <span id="top-holdings-share-label">已列示占净值</span>
+                  </div>
+                </header>
+                <div
+                  id="holding-treemap"
+                  class="treemap holding-treemap"
+                  role="img"
+                  aria-label="证券持仓占净值比例矩阵图"
+                ></div>
+                <p id="security-map-note" class="matrix-note">
+                  矩形面积按各项占净值比例分配，标签显示实际比例。
+                </p>
+              </article>
+
+              <article class="treemap-panel sector-panel">
+                <header class="treemap-heading">
+                  <div>
+                    <span id="structure-map-label" class="section-label"
+                      >SECTOR MAP</span
+                    >
+                    <h3 id="structure-map-title">行业 / 板块矩阵</h3>
+                    <div
+                      id="structure-view-tabs"
+                      class="structure-view-tabs"
+                      role="tablist"
+                      aria-label="债券结构维度"
+                      hidden
+                    ></div>
+                  </div>
+                  <div class="matrix-total">
+                    <strong id="sector-total-share">0%</strong>
+                    <span id="sector-total-share-label">股票行业占净值</span>
+                  </div>
+                </header>
+                <div
+                  id="sector-treemap"
+                  class="treemap sector-treemap"
+                  role="img"
+                  aria-label="股票行业配置占净值比例矩阵图"
+                ></div>
+                <div id="sector-empty" class="matrix-empty" hidden></div>
+                <p id="sector-note" class="matrix-note">
+                  行业分类来自基金定期报告披露。
+                </p>
+              </article>
+            </div>
+
+            <div class="holdings-detail">
+              <div class="detail-heading">
+                <span class="section-label">DISCLOSED POSITIONS</span>
+                <span>明细数据</span>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>排名</th>
+                      <th>证券</th>
+                      <th id="holding-weight-heading">占净值</th>
+                      <th id="quantity-heading">持股数</th>
+                      <th>持仓市值</th>
+                    </tr>
+                  </thead>
+                  <tbody id="holdings-table"></tbody>
+                </table>
+                <div id="no-holdings" class="no-holdings" hidden>
+                  该基金暂无可用的股票或债券持仓数据。
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <aside id="warnings-panel" class="warnings-panel" hidden>
+          <strong>数据提示</strong>
+          <ul id="warnings-list"></ul>
+        </aside>
+
+        <footer class="data-footer">
+          <span>数据仅供研究参考，不构成投资建议。</span>
+          <span id="data-source">AKShare</span>
+        </footer>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>FUND LENS / 2026</span>
+      <span>PUBLIC DATA · CLEAR VIEW</span>
+    </footer>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>
