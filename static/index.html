@@ -253,7 +253,7 @@
             <div>
               <p class="eyebrow">PERFORMANCE LENS / HOLDING PERIOD</p>
               <h2>净值与收益全景</h2>
-              <p id="nav-chart-subtitle">近一年区间收益走势</p>
+              <p id="nav-chart-subtitle">近一年业绩走势</p>
             </div>
             <div class="nav-chart-controls">
               <div
@@ -268,10 +268,10 @@
                   role="tab"
                   class="active"
                 >
-                  区间收益走势
+                  业绩走势
                 </button>
                 <button type="button" data-nav-metric="阶段收益" role="tab">
-                  阶段累计收益
+                  阶段涨幅
                 </button>
                 <button type="button" data-nav-metric="累计净值" role="tab">
                   累计净值
@@ -283,7 +283,7 @@
                   分红记录
                 </button>
                 <button type="button" data-nav-metric="周期收益" role="tab">
-                  周期收益
+                  周期涨幅
                 </button>
                 <button type="button" data-nav-metric="回撤修复" role="tab">
                   回撤修复
@@ -303,6 +303,28 @@
                 <button type="button" data-nav-range="3m" role="tab">近3个月</button>
                 <button type="button" data-nav-range="1m" role="tab">近1个月</button>
                 <button type="button" data-nav-range="custom" role="tab">自定义</button>
+              </div>
+              <div id="track-benchmark-control" class="track-benchmark-control">
+                <label for="track-benchmark-select">
+                  <span>赛道基准</span>
+                  <select id="track-benchmark-select">
+                    <optgroup label="股票宽基">
+                      <option value="hs300">沪深300</option>
+                      <option value="csi500">中证500</option>
+                      <option value="csi800">中证800</option>
+                    </optgroup>
+                    <optgroup label="债券赛道">
+                      <option value="cbond_composite">中债新综合财富</option>
+                      <option value="cbond_short">中债短久期财富</option>
+                      <option value="cbond_credit">中债信用债财富</option>
+                      <option value="cbond_rates">中债利率债财富</option>
+                    </optgroup>
+                    <optgroup label="股债组合">
+                      <option value="fixed_income_plus_80_20">固收+ 80/20</option>
+                    </optgroup>
+                  </select>
+                </label>
+                <small id="track-benchmark-status">选择用于同图比较的赛道指数</small>
               </div>
             </div>
           </div>
@@ -346,6 +368,10 @@
           </div>
 
           <div id="nav-chart-shell" class="nav-chart-shell">
+            <div id="nav-chart-legend" class="nav-chart-legend">
+              <span class="fund-series">基金涨幅</span>
+              <span id="benchmark-legend-label" class="benchmark-series">赛道基准</span>
+            </div>
             <svg
               id="nav-history-chart"
               viewBox="0 0 1000 360"
@@ -380,19 +406,22 @@
           <div
             id="periodic-returns-panel"
             class="periodic-returns-panel"
-            aria-label="基金周期收益"
+            aria-label="基金周期涨幅"
             hidden
           >
             <div class="periodic-returns-toolbar">
-              <small id="periodic-returns-subtitle">各自然年内的独立涨跌幅</small>
+              <small id="periodic-returns-subtitle">各自然年内的基金、赛道与相对涨跌幅</small>
               <div
                 id="periodic-returns-switcher"
                 class="periodic-returns-switcher"
                 role="tablist"
-                aria-label="周期收益粒度"
+                aria-label="周期涨幅粒度"
               >
                 <button type="button" data-periodic-unit="year" role="tab" class="active">
                   按年
+                </button>
+                <button type="button" data-periodic-unit="quarter" role="tab">
+                  按季度
                 </button>
                 <button type="button" data-periodic-unit="month" role="tab">
                   按月
@@ -401,18 +430,20 @@
             </div>
             <div id="periodic-returns-grid" class="periodic-returns-grid"></div>
             <div id="periodic-returns-empty" class="periodic-returns-empty" hidden>
-              暂无足够的净值数据用于计算周期收益。
+              暂无足够的净值数据用于计算周期涨幅。
             </div>
           </div>
           <div
             id="stage-performance-panel"
             class="stage-performance-panel"
-            aria-label="阶段累计收益"
+            aria-label="阶段涨幅"
             hidden
           >
             <div class="stage-performance-list-heading">
               <span>阶段</span>
-              <span>累计收益</span>
+              <span>基金涨幅</span>
+              <span id="stage-benchmark-heading">赛道涨幅</span>
+              <span>相对赛道</span>
             </div>
             <div id="performance-chart" class="stage-performance-list"></div>
           </div>

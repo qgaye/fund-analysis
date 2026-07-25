@@ -15,6 +15,10 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from benchmarks import (
+    get_track_benchmark,
+    track_benchmark_catalog,
+)
 from fund_lookup import FundLookupError, get_fund_data
 
 
@@ -31,6 +35,8 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 _cache: dict[tuple[str, int], tuple[float, dict[str, Any]]] = {}
 _cache_lock = threading.Lock()
+_benchmark_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_benchmark_cache_lock = threading.Lock()
 
 
 def _read_cache(key: tuple[str, int]) -> dict[str, Any] | None:
@@ -59,6 +65,41 @@ async def index() -> FileResponse:
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/benchmarks", summary="赛道基准目录")
+async def benchmark_catalog() -> dict[str, Any]:
+    return {"基准": track_benchmark_catalog()}
+
+
+@app.get("/api/benchmarks/{benchmark_key}", summary="赛道基准历史行情")
+async def benchmark_history(benchmark_key: str) -> JSONResponse:
+    now = time.monotonic()
+    with _benchmark_cache_lock:
+        cached = _benchmark_cache.get(benchmark_key)
+        if cached is not None and now - cached[0] <= CACHE_TTL_SECONDS:
+            return JSONResponse(
+                jsonable_encoder(copy.deepcopy(cached[1])),
+                headers={"X-Cache": "HIT"},
+            )
+    try:
+        result = await run_in_threadpool(
+            get_track_benchmark,
+            benchmark_key,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="未知的赛道基准。") from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"赛道基准上游查询失败：{exc}",
+        ) from exc
+    with _benchmark_cache_lock:
+        _benchmark_cache[benchmark_key] = (now, copy.deepcopy(result))
+    return JSONResponse(
+        jsonable_encoder(result),
+        headers={"X-Cache": "MISS"},
+    )
 
 
 @app.get(

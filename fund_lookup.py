@@ -19,6 +19,7 @@ import requests
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
 
+from benchmarks import recommend_track_benchmark
 
 class FundLookupError(RuntimeError):
     """基金查询失败。"""
@@ -1119,6 +1120,39 @@ def _nav_history(
     )
 
 
+def _year_to_date_return(
+    rows: list[dict[str, Any]],
+) -> float | None:
+    """从累计收益率曲线计算最新年份年初至今涨幅。"""
+    valid: list[tuple[str, float]] = []
+    for row in rows:
+        date_value = str(row.get("日期") or "")
+        try:
+            return_value = float(row.get("累计收益率"))
+        except (TypeError, ValueError):
+            continue
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_value):
+            valid.append((date_value, return_value))
+    if not valid:
+        return None
+
+    valid.sort(key=lambda item: item[0])
+    latest_year = valid[-1][0][:4]
+    year_start = f"{latest_year}-01-01"
+    current_year = [item for item in valid if item[0] >= year_start]
+    if not current_year:
+        return None
+
+    previous = [item for item in valid if item[0] < year_start]
+    base_return = previous[-1][1] if previous else current_year[0][1]
+    latest_return = current_year[-1][1]
+    base_index = 1 + base_return / 100
+    latest_index = 1 + latest_return / 100
+    if base_index <= 0:
+        return None
+    return round((latest_index / base_index - 1) * 100, 2)
+
+
 def _dividend_history(frame: pd.DataFrame) -> list[dict[str, Any]]:
     if frame.empty or "除息日" not in frame.columns:
         return []
@@ -1241,6 +1275,10 @@ def get_fund_data(
         "近1月": _pick(rank_row.get("近1月")),
         "近3月": _pick(rank_row.get("近3月")),
         "近6月": _pick(rank_row.get("近6月")),
+        "今年以来": _pick(
+            rank_row.get("今年来"),
+            rank_row.get("今年以来"),
+        ),
         "近1年": _pick(rank_row.get("近1年")),
         "近3年": _pick(rank_row.get("近3年")),
         "单位": "%",
@@ -1315,6 +1353,13 @@ def get_fund_data(
         for range_key in ("all", "5y", "3y", "1y", "6m", "3m", "1m")
     }
     dividends = _dividend_history(nav_frames["分红"])
+
+    if performance.get("今年以来") is None:
+        performance["今年以来"] = _year_to_date_return(
+            cumulative_returns.get("1y")
+            or cumulative_returns.get("all")
+            or []
+        )
 
     if performance.get("成立以来") is None:
         inception_curve = cumulative_returns.get("all") or []
@@ -1441,6 +1486,11 @@ def get_fund_data(
         "基础资料": basic,
         "净值信息": net_value,
         "历史业绩": performance,
+        "赛道基准建议": recommend_track_benchmark(
+            str(basic["名称"] or ""),
+            str(basic["类型"] or ""),
+            bond_type_structure.get("明细", []),
+        ),
         "净值曲线": {
             "指标": "单位净值",
             "数量": len(nav_history),

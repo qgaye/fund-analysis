@@ -21,6 +21,7 @@ from fund_lookup import (
     _pick,
     _report_period,
     _quarter_end_from_period,
+    _year_to_date_return,
 )
 
 
@@ -349,6 +350,27 @@ class FundLookupTests(unittest.TestCase):
 
         self.assertEqual(dividends[0]["除息日"], "2025-04-10")
         self.assertAlmostEqual(dividends[0]["每份分红"], 0.014)
+
+    def test_year_to_date_return_uses_previous_year_end(self) -> None:
+        result = _year_to_date_return(
+            [
+                {"日期": "2025-12-31", "累计收益率": 10.0},
+                {"日期": "2026-01-05", "累计收益率": 11.0},
+                {"日期": "2026-07-24", "累计收益率": 21.0},
+            ]
+        )
+
+        self.assertEqual(result, 10.0)
+
+    def test_year_to_date_return_falls_back_to_inception(self) -> None:
+        result = _year_to_date_return(
+            [
+                {"日期": "2026-03-02", "累计收益率": 0.0},
+                {"日期": "2026-07-24", "累计收益率": 4.25},
+            ]
+        )
+
+        self.assertEqual(result, 4.25)
 
 
 if __name__ == "__main__":

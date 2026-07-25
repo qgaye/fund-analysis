@@ -20,6 +20,11 @@ let currentDividends = [];
 let navPlotPoints = [];
 let currentPeriodicUnit = "year";
 let currentPerformance = {};
+let currentTrackBenchmark = null;
+let currentTrackBenchmarkKey = "";
+let trackBenchmarkRequestId = 0;
+let benchmarkPlotPoints = [];
+const trackBenchmarkCache = new Map();
 
 const palette = [
   "#d33b28",
@@ -44,9 +49,9 @@ const navMetricConfig = {
   },
   阶段收益: {
     valueKey: "累计收益率",
-    subtitle: "近 1 天 / 1 月 / 3 月 / 6 月 / 1 年 / 3 年及成立以来的阶段累计收益",
-    note: "阶段累计收益按各标准区间统计，反映从该区间起点持有至今的累计涨跌幅。",
-    tooltipLabel: "阶段收益",
+    subtitle: "近 1 天 / 1 月 / 3 月 / 6 月 / 今年以来 / 1 年 / 3 年及成立以来的阶段涨幅",
+    note: "阶段涨幅按相同起止日比较基金与所选赛道，并以百分点显示领先或落后。",
+    tooltipLabel: "阶段涨幅",
     unit: "%",
   },
   累计净值: {
@@ -72,16 +77,16 @@ const navMetricConfig = {
   },
   周期收益: {
     valueKey: "累计净值",
-    subtitle: "各自然年 / 月内的独立涨跌幅",
-    note: "按累计净值计算，已将现金分红加回；每格代表该自然年 / 月区间内的独立涨跌幅，非累计收益。",
-    tooltipLabel: "周期收益",
+    subtitle: "各自然年 / 季度 / 月内的独立涨跌幅",
+    note: "基金按累计净值计算并与所选赛道采用相同起止日；每格展示自然年 / 季度 / 月内的基金、赛道和相对涨幅。",
+    tooltipLabel: "周期涨幅",
     unit: "%",
   },
   回撤修复: {
-    valueKey: "回撤",
-    subtitle: "自历史高点的回撤深度与修复过程",
-    note: "回撤衡量从此前累计净值高点下跌的幅度；0% 表示已创新高（完成修复），数值越低表示距离高点越深。",
-    tooltipLabel: "回撤",
+    valueKey: "累计收益率",
+    subtitle: "区间收益曲线中的最大回撤与修复阶段",
+    note: "基金最大回撤按区间收益指数计算，绿色标出回撤段、红色标出修复段；蓝色虚线同步展示所选赛道，悬浮可比较双方回撤。",
+    tooltipLabel: "区间收益",
     unit: "%",
   },
 };
@@ -154,6 +159,65 @@ function clearInputError() {
   codeInput.removeAttribute("aria-invalid");
 }
 
+function benchmarkReturnBetween(start, end, previousEndPoint = false) {
+  const rows = currentTrackBenchmark?.明细 ?? [];
+  if (rows.length < 2 || !start || !end) return null;
+  const endIndex = rows.findLastIndex((row) => row.日期 <= end);
+  if (endIndex < 1) return null;
+  let startIndex = previousEndPoint
+    ? endIndex - 1
+    : rows.findLastIndex((row) => row.日期 <= start);
+  if (startIndex < 0) {
+    startIndex = rows.findIndex((row) => row.日期 >= start);
+  }
+  if (startIndex < 0 || startIndex >= endIndex) return null;
+  const startValue = Number(rows[startIndex].指数值);
+  const endValue = Number(rows[endIndex].指数值);
+  if (
+    !Number.isFinite(startValue) ||
+    !Number.isFinite(endValue) ||
+    startValue <= 0
+  ) {
+    return null;
+  }
+  return (endValue / startValue - 1) * 100;
+}
+
+function shiftIsoDate(isoDate, { days = 0, months = 0, years = 0 }) {
+  const value = new Date(`${isoDate}T12:00:00Z`);
+  if (years || months) {
+    const targetDay = value.getUTCDate();
+    value.setUTCDate(1);
+    value.setUTCFullYear(value.getUTCFullYear() + years);
+    value.setUTCMonth(value.getUTCMonth() + months);
+    const lastDay = new Date(
+      Date.UTC(value.getUTCFullYear(), value.getUTCMonth() + 1, 0),
+    ).getUTCDate();
+    value.setUTCDate(Math.min(targetDay, lastDay));
+  }
+  if (days) value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+}
+
+function benchmarkStageReturn(key) {
+  const navRows = currentNavHistory?.累计净值?.明细 ?? [];
+  const end = navRows.at(-1)?.日期;
+  if (!end) return null;
+  if (key === "日涨幅") {
+    return benchmarkReturnBetween(end, end, true);
+  }
+  const startByKey = {
+    近1月: shiftIsoDate(end, { months: -1 }),
+    近3月: shiftIsoDate(end, { months: -3 }),
+    近6月: shiftIsoDate(end, { months: -6 }),
+    今年以来: `${end.slice(0, 4)}-01-01`,
+    近1年: shiftIsoDate(end, { years: -1 }),
+    近3年: shiftIsoDate(end, { years: -3 }),
+    成立以来: navRows[0]?.日期,
+  };
+  return benchmarkReturnBetween(startByKey[key], end);
+}
+
 function renderPerformance(performance) {
   currentPerformance = performance ?? {};
   const chart = document.querySelector("#performance-chart");
@@ -162,11 +226,18 @@ function renderPerformance(performance) {
     { label: "近1月", key: "近1月" },
     { label: "近3月", key: "近3月" },
     { label: "近6月", key: "近6月" },
+    { label: "今年以来", key: "今年以来" },
     { label: "近1年", key: "近1年" },
     { label: "近3年", key: "近3年" },
     { label: "成立以来", key: "成立以来" },
   ];
   chart.replaceChildren();
+  text(
+    "#stage-benchmark-heading",
+    currentTrackBenchmark?.简称
+      ? `${currentTrackBenchmark.简称}涨幅`
+      : "赛道涨幅",
+  );
 
   periods.forEach(({ label: period, key }, index) => {
     const rawValue = currentPerformance[key];
@@ -183,8 +254,32 @@ function renderPerformance(performance) {
 
     const value = document.createElement("strong");
     value.textContent = valid ? formatPercent(numeric) : "—";
+    value.className = valid ? movementClass(numeric) : "";
 
-    item.append(label, value);
+    const benchmarkReturn = benchmarkStageReturn(key);
+    const benchmarkValue = document.createElement("strong");
+    benchmarkValue.className = `benchmark-value ${
+      Number.isFinite(benchmarkReturn)
+        ? movementClass(benchmarkReturn)
+        : ""
+    }`;
+    benchmarkValue.textContent = Number.isFinite(benchmarkReturn)
+      ? formatPercent(benchmarkReturn)
+      : "—";
+
+    const relativeReturn = Number.isFinite(numeric) &&
+      Number.isFinite(benchmarkReturn)
+      ? numeric - benchmarkReturn
+      : null;
+    const relativeValue = document.createElement("strong");
+    relativeValue.className = `relative-value ${
+      Number.isFinite(relativeReturn) ? movementClass(relativeReturn) : ""
+    }`;
+    relativeValue.textContent = Number.isFinite(relativeReturn)
+      ? `${relativeReturn > 0 ? "+" : ""}${relativeReturn.toFixed(2)}pp`
+      : "—";
+
+    item.append(label, value, benchmarkValue, relativeValue);
     chart.append(item);
   });
 }
@@ -199,8 +294,15 @@ function computePeriodicReturns(unit) {
     .sort((a, b) => a.日期.localeCompare(b.日期));
   if (rows.length < 2) return [];
 
-  const keyOf = (isoDate) =>
-    unit === "year" ? isoDate.slice(0, 4) : isoDate.slice(0, 7);
+  const keyOf = (isoDate) => {
+    if (unit === "year") return isoDate.slice(0, 4);
+    if (unit === "quarter") {
+      const year = isoDate.slice(0, 4);
+      const quarter = Math.ceil(Number(isoDate.slice(5, 7)) / 3);
+      return `${year}-Q${quarter}`;
+    }
+    return isoDate.slice(0, 7);
+  };
 
   // 每个自然周期保留首末净值点。
   const buckets = new Map();
@@ -230,9 +332,16 @@ function computePeriodicReturns(unit) {
       label:
         unit === "year"
           ? `${bucket.key}年`
+          : unit === "quarter"
+            ? `${bucket.key.slice(0, 4)} Q${bucket.key.at(-1)}`
           : `${bucket.key.slice(0, 4)}/${bucket.key.slice(5, 7)}`,
       change,
       partial: index === 0,
+      startDate:
+        index > 0
+          ? ordered[index - 1].last.日期
+          : bucket.first.日期,
+      endDate: bucket.last.日期,
     };
   });
 }
@@ -250,7 +359,11 @@ function renderPeriodicReturns(unit = currentPeriodicUnit) {
   });
   text(
     "#periodic-returns-subtitle",
-    unit === "year" ? "各自然年内的独立涨跌幅" : "各自然月内的独立涨跌幅",
+    unit === "year"
+      ? "各自然年内的基金、赛道与相对涨跌幅"
+      : unit === "quarter"
+        ? "各自然季度内的基金、赛道与相对涨跌幅"
+        : "各自然月内的基金、赛道与相对涨跌幅",
   );
 
   let entries = computePeriodicReturns(unit);
@@ -283,11 +396,49 @@ function renderPeriodicReturns(unit = currentPeriodicUnit) {
 
       const value = document.createElement("strong");
       value.textContent = valid ? formatPercent(numeric) : "—";
+      value.className = valid ? movementClass(numeric) : "";
+
+      const fundLabel = document.createElement("small");
+      fundLabel.textContent = "基金";
+      const primary = document.createElement("div");
+      primary.className = "periodic-primary";
+      primary.append(fundLabel, value);
+
+      const benchmarkReturn = benchmarkReturnBetween(
+        entry.startDate,
+        entry.endDate,
+      );
+      const benchmarkValue = document.createElement("b");
+      benchmarkValue.className = Number.isFinite(benchmarkReturn)
+        ? movementClass(benchmarkReturn)
+        : "";
+      benchmarkValue.textContent = Number.isFinite(benchmarkReturn)
+        ? formatPercent(benchmarkReturn)
+        : "—";
+      const benchmarkLabel = document.createElement("small");
+      benchmarkLabel.textContent =
+        currentTrackBenchmark?.简称 ?? "赛道";
+      const secondary = document.createElement("div");
+      secondary.className = "periodic-secondary";
+      secondary.append(benchmarkLabel, benchmarkValue);
+
+      const relativeReturn = valid && Number.isFinite(benchmarkReturn)
+        ? numeric - benchmarkReturn
+        : null;
+      const relative = document.createElement("em");
+      relative.className = Number.isFinite(relativeReturn)
+        ? movementClass(relativeReturn)
+        : "";
+      relative.textContent = Number.isFinite(relativeReturn)
+        ? `${relativeReturn >= 0 ? "领先" : "落后"} ${Math.abs(
+            relativeReturn,
+          ).toFixed(2)}pp`
+        : "相对赛道 —";
 
       const marker = document.createElement("i");
       marker.setAttribute("aria-hidden", "true");
 
-      item.append(label, value, marker);
+      item.append(label, primary, secondary, relative, marker);
       if (entry.partial) {
         item.title = `${entry.label}为区间起点，涨跌幅以本期首个净值为基准。`;
       }
@@ -374,20 +525,116 @@ function customReturnRows() {
   }));
 }
 
+function daysBetween(start, end) {
+  const startTime = new Date(`${start}T00:00:00Z`).getTime();
+  const endTime = new Date(`${end}T00:00:00Z`).getTime();
+  return Math.max(0, Math.round((endTime - startTime) / 86400000));
+}
+
+function computeDrawdownAnalysis(range) {
+  let returnRows =
+    range === "custom"
+      ? customReturnRows()
+      : currentNavHistory?.累计收益率?.区间?.[range] ?? [];
+
+  // 上游偶尔缺少某个收益区间，用单位净值首日归零作为降级数据源。
+  if (returnRows.length < 2) {
+    const unitRows = currentNavHistory?.单位净值?.明细 ?? [];
+    const filtered =
+      range === "custom"
+        ? filterCustomRows(unitRows)
+        : filterNavRows(unitRows, range);
+    const baseNav = Number(filtered[0]?.单位净值);
+    returnRows =
+      Number.isFinite(baseNav) && baseNav > 0
+        ? filtered.map((row) => ({
+            日期: row.日期,
+            累计收益率: (Number(row.单位净值) / baseNav - 1) * 100,
+          }))
+        : [];
+  }
+
+  const selected = returnRows
+    .map((row) => ({
+      日期: row.日期,
+      累计收益率: Number(row.累计收益率),
+    }))
+    .filter(
+      (row) => row.日期 && Number.isFinite(row.累计收益率),
+    )
+    .sort((a, b) => a.日期.localeCompare(b.日期));
+
+  if (!selected.length) {
+    return {
+      rows: [],
+      maxDrawdown: 0,
+      peakIndex: null,
+      troughIndex: null,
+      recoveryIndex: null,
+      recoveryDays: null,
+      elapsedRecoveryDays: null,
+    };
+  }
+
+  let runningPeak = 1 + selected[0].累计收益率 / 100;
+  let runningPeakIndex = 0;
+  let maxDrawdown = 0;
+  let maxPeakIndex = 0;
+  let troughIndex = 0;
+  let maxPeakValue = runningPeak;
+
+  const rows = selected.map((row, index) => {
+    const returnIndex = 1 + row.累计收益率 / 100;
+    if (returnIndex > runningPeak) {
+      runningPeak = returnIndex;
+      runningPeakIndex = index;
+    }
+    const drawdown =
+      runningPeak > 0 ? (returnIndex / runningPeak - 1) * 100 : 0;
+    if (drawdown < maxDrawdown) {
+      maxDrawdown = drawdown;
+      maxPeakIndex = runningPeakIndex;
+      troughIndex = index;
+      maxPeakValue = runningPeak;
+    }
+    return {
+      ...row,
+      收益指数: returnIndex,
+      回撤: drawdown,
+    };
+  });
+
+  let recoveryIndex = null;
+  if (maxDrawdown < -0.000001) {
+    recoveryIndex = rows.findIndex(
+      (row, index) =>
+        index > troughIndex && row.收益指数 >= maxPeakValue * (1 - 1e-10),
+    );
+    if (recoveryIndex < 0) recoveryIndex = null;
+  }
+
+  const recoveryDays =
+    recoveryIndex === null
+      ? null
+      : daysBetween(rows[troughIndex].日期, rows[recoveryIndex].日期);
+  const elapsedRecoveryDays =
+    maxDrawdown < -0.000001 && recoveryIndex === null
+      ? daysBetween(rows[troughIndex].日期, rows.at(-1).日期)
+      : null;
+
+  return {
+    rows,
+    maxDrawdown,
+    peakIndex: maxPeakIndex,
+    troughIndex,
+    recoveryIndex,
+    recoveryDays,
+    elapsedRecoveryDays,
+  };
+}
+
 function computeDrawdownRows(range) {
-  const source = currentNavHistory?.累计净值?.明细 ?? [];
-  const rows =
-    range === "custom" ? filterCustomRows(source) : filterNavRows(source, range);
-  let peak = -Infinity;
-  return rows
-    .map((row) => {
-      const nav = Number(row.累计净值);
-      if (!Number.isFinite(nav)) return null;
-      if (nav > peak) peak = nav;
-      const drawdown = peak > 0 ? (nav / peak - 1) * 100 : 0;
-      return { 日期: row.日期, 回撤: drawdown };
-    })
-    .filter(Boolean);
+  return computeDrawdownAnalysis(range).rows;
 }
 
 function navRowsFor(metric, range) {
@@ -534,11 +781,65 @@ function showCustomRangeError(message = "") {
   error.textContent = message;
 }
 
+function benchmarkRowsForChart(fundRows) {
+  const source = currentTrackBenchmark?.明细 ?? [];
+  if (fundRows.length < 2 || source.length < 2) return [];
+  const start = fundRows[0].日期;
+  const end = fundRows.at(-1).日期;
+  const usable = source.filter((row) => row.日期 <= end);
+  const baseRow =
+    usable.filter((row) => row.日期 <= start).at(-1) ??
+    usable.find((row) => row.日期 >= start);
+  const baseValue = Number(baseRow?.指数值);
+  if (!baseRow || !Number.isFinite(baseValue) || baseValue <= 0) return [];
+
+  const rows = usable
+    .filter((row) => row.日期 >= start && row.日期 <= end)
+    .map((row) => ({
+      日期: row.日期,
+      累计收益率: (Number(row.指数值) / baseValue - 1) * 100,
+    }))
+    .filter((row) => Number.isFinite(row.累计收益率));
+  if (baseRow.日期 < start) {
+    rows.unshift({ 日期: start, 累计收益率: 0 });
+  }
+  return rows;
+}
+
+function addDrawdownDepth(rows) {
+  let peak = -Infinity;
+  return rows.map((row) => {
+    const returnIndex = 1 + Number(row.累计收益率) / 100;
+    peak = Math.max(peak, returnIndex);
+    return {
+      ...row,
+      回撤: peak > 0 ? (returnIndex / peak - 1) * 100 : 0,
+    };
+  });
+}
+
 function formatNavValue(value, metric = currentNavMetric, axis = false) {
   if (metric === "累计收益率" || metric === "回撤修复") {
     return axis ? `${Number(value).toFixed(2)}%` : formatPercent(value);
   }
   return formatNumber(value, 4);
+}
+
+function buildYAxisTicks(minValue, maxValue, includeZero = false) {
+  const ticks = Array.from({ length: 5 }, (_, index) => {
+    const ratio = index / 4;
+    return maxValue - ratio * (maxValue - minValue);
+  });
+  if (includeZero) ticks.push(0);
+
+  return ticks
+    .sort((a, b) => b - a)
+    .filter(
+      (value, index, values) =>
+        index === 0 ||
+        Math.abs(value - values[index - 1]) >
+          Math.max(Math.abs(maxValue - minValue) * 0.000001, 1e-9),
+    );
 }
 
 function renderNavChart(
@@ -557,13 +858,21 @@ function renderNavChart(
   const noData = document.querySelector("#no-nav-history");
   const tooltip = document.querySelector("#nav-chart-tooltip");
   const summary = document.querySelector(".nav-history-summary");
-  const rows = navRowsFor(metric, range);
+  const isDrawdownView = metric === "回撤修复";
+  const isPerformanceView = metric === "累计收益率";
+  const isBenchmarkCurveView = isPerformanceView || isDrawdownView;
+  const drawdownAnalysis = isDrawdownView
+    ? computeDrawdownAnalysis(range)
+    : null;
+  const rows = drawdownAnalysis?.rows ?? navRowsFor(metric, range);
   const values = rows
     .map((row) => Number(row[config.valueKey]))
     .filter(Number.isFinite);
   svg.replaceChildren();
+  svg.classList.toggle("drawdown-view", isDrawdownView);
   tooltip.hidden = true;
   navPlotPoints = [];
+  benchmarkPlotPoints = [];
   const isDividendView = metric === "分红记录";
   const isPeriodicView = metric === "周期收益";
   const isStageView = metric === "阶段收益";
@@ -573,8 +882,12 @@ function renderNavChart(
   periodicPanel.hidden = !isPeriodicView;
   stagePanel.hidden = !isStageView;
   summary.hidden = isPeriodicView || isStageView;
+  summary.classList.toggle("drawdown-summary", isDrawdownView);
   document.querySelector("#nav-range-switcher").hidden =
     isPeriodicView || isStageView;
+  document.querySelector("#track-benchmark-control").hidden = false;
+  document.querySelector("#nav-chart-legend").hidden =
+    !isBenchmarkCurveView;
 
   document.querySelectorAll("[data-nav-range]").forEach((button) => {
     const active = button.dataset.navRange === range;
@@ -609,30 +922,32 @@ function renderNavChart(
     renderDividendHistory(rows);
     return;
   }
-  const isDrawdownView = metric === "回撤修复";
   text(
     "#nav-range-change-label",
     isDrawdownView
-      ? "当前回撤"
-      : metric === "累计收益率"
-        ? "区间收益"
+      ? "最大回撤比例"
+      : isPerformanceView
+        ? "基金涨幅"
         : "首末变化",
   );
-  text("#nav-range-dates-label", "覆盖日期");
+  text(
+    "#nav-range-dates-label",
+    isDrawdownView ? "回撤修复阶段" : "覆盖日期",
+  );
   text(
     "#nav-range-high-label",
     isDrawdownView
-      ? "区间最大回撤"
-      : metric === "累计收益率"
-        ? "收益率最高"
+      ? "最大回撤修复天数"
+      : isPerformanceView
+        ? "赛道涨幅"
         : "区间最高",
   );
   text(
     "#nav-range-low-label",
     isDrawdownView
-      ? "修复状态"
-      : metric === "累计收益率"
-        ? "收益率最低"
+      ? "最大回撤阶段"
+      : isPerformanceView
+        ? "相对赛道"
         : "区间最低",
   );
 
@@ -659,11 +974,32 @@ function renderNavChart(
   const plotHeight = height - margin.top - margin.bottom;
   const startTime = new Date(`${rows[0].日期}T00:00:00`).getTime();
   const endTime = new Date(`${rows[rows.length - 1].日期}T00:00:00`).getTime();
+  const isPercentageChart =
+    metric === "累计收益率" || metric === "回撤修复";
+  const rawBenchmarkRows = isBenchmarkCurveView
+    ? benchmarkRowsForChart(rows)
+    : [];
+  const benchmarkRows = isDrawdownView
+    ? addDrawdownDepth(rawBenchmarkRows)
+    : rawBenchmarkRows;
+  const benchmarkValues = benchmarkRows.map((row) => row.累计收益率);
   let minValue = Math.min(...values);
   let maxValue = Math.max(...values);
+  if (benchmarkValues.length) {
+    minValue = Math.min(minValue, ...benchmarkValues);
+    maxValue = Math.max(maxValue, ...benchmarkValues);
+  }
+  if (isPercentageChart) {
+    minValue = Math.min(minValue, 0);
+    maxValue = Math.max(maxValue, 0);
+  }
   const valueSpan = maxValue - minValue || Math.max(maxValue * 0.02, 0.02);
-  minValue -= valueSpan * 0.1;
-  maxValue += valueSpan * 0.1;
+  minValue = isPercentageChart && minValue === 0
+    ? 0
+    : minValue - valueSpan * 0.1;
+  maxValue = isPercentageChart && maxValue === 0
+    ? 0
+    : maxValue + valueSpan * 0.1;
 
   const xFor = (date) =>
     margin.left +
@@ -698,27 +1034,73 @@ function renderNavChart(
   defs.append(gradient);
   svg.append(defs);
 
+  if (
+    isDrawdownView &&
+    drawdownAnalysis?.peakIndex !== null &&
+    drawdownAnalysis?.troughIndex !== null &&
+    drawdownAnalysis.maxDrawdown < -0.000001
+  ) {
+    const peakDate = rows[drawdownAnalysis.peakIndex].日期;
+    const troughDate = rows[drawdownAnalysis.troughIndex].日期;
+    const repairEndIndex =
+      drawdownAnalysis.recoveryIndex ?? rows.length - 1;
+    const repairEndDate = rows[repairEndIndex].日期;
+    const phaseBands = svgNode("g", {
+      class: "drawdown-phase-bands",
+      "aria-hidden": "true",
+    });
+    const declineStart = xFor(peakDate);
+    const declineEnd = xFor(troughDate);
+    const repairStart = declineEnd;
+    const repairEnd = xFor(repairEndDate);
+    phaseBands.append(
+      svgNode("rect", {
+        x: declineStart,
+        y: margin.top,
+        width: Math.max(declineEnd - declineStart, 1),
+        height: plotHeight,
+        class: "drawdown-decline-band",
+      }),
+      svgNode("rect", {
+        x: repairStart,
+        y: margin.top,
+        width: Math.max(repairEnd - repairStart, 1),
+        height: plotHeight,
+        class: "drawdown-recovery-band",
+      }),
+    );
+    svg.append(phaseBands);
+  }
+
   const grid = svgNode("g", { class: "nav-grid" });
-  for (let index = 0; index < 5; index += 1) {
-    const ratio = index / 4;
-    const y = margin.top + ratio * plotHeight;
-    const labelValue = maxValue - ratio * (maxValue - minValue);
+  const yAxisTicks = buildYAxisTicks(
+    minValue,
+    maxValue,
+    isPercentageChart,
+  );
+  yAxisTicks.forEach((labelValue) => {
+    const y = yFor(labelValue);
+    const isZeroTick = isPercentageChart && Math.abs(labelValue) < 1e-9;
     grid.append(
       svgNode("line", {
         x1: margin.left,
         y1: y,
         x2: width - margin.right,
         y2: y,
+        class: isZeroTick ? "zero-line" : "",
       }),
     );
     const label = svgNode("text", {
       x: margin.left - 12,
       y: y + 4,
       "text-anchor": "end",
+      class: isZeroTick ? "zero-label" : "",
     });
-    label.textContent = formatNavValue(labelValue, metric, true);
+    label.textContent = isZeroTick
+      ? "0.00%"
+      : formatNavValue(labelValue, metric, true);
     grid.append(label);
-  }
+  });
   for (let index = 0; index < 5; index += 1) {
     const ratio = index / 4;
     const time = startTime + ratio * (endTime - startTime);
@@ -762,6 +1144,120 @@ function renderNavChart(
     svgNode("path", { d: areaPath, class: "nav-area" }),
     svgNode("path", { d: linePath, class: "nav-line" }),
   );
+
+  if (benchmarkRows.length >= 2) {
+    benchmarkPlotPoints = benchmarkRows.map((row) => ({
+      ...row,
+      x: xFor(row.日期),
+      y: yFor(row.累计收益率),
+      value: Number(row.累计收益率),
+    }));
+    const benchmarkPath = benchmarkPlotPoints
+      .map(
+        (point, index) =>
+          `${index ? "L" : "M"}${point.x.toFixed(2)},${point.y.toFixed(2)}`,
+      )
+      .join(" ");
+    svg.append(
+      svgNode("path", {
+        d: benchmarkPath,
+        class: "benchmark-line",
+      }),
+    );
+  }
+
+  if (
+    isDrawdownView &&
+    drawdownAnalysis?.peakIndex !== null &&
+    drawdownAnalysis?.troughIndex !== null &&
+    drawdownAnalysis.maxDrawdown < -0.000001
+  ) {
+    const {
+      peakIndex,
+      troughIndex,
+      recoveryIndex,
+      recoveryDays,
+      elapsedRecoveryDays,
+      maxDrawdown,
+    } = drawdownAnalysis;
+    const repairEndIndex = recoveryIndex ?? navPlotPoints.length - 1;
+    const stages = svgNode("g", { class: "drawdown-stages" });
+    const segmentPath = (startIndex, endIndex) =>
+      navPlotPoints
+        .slice(startIndex, endIndex + 1)
+        .map(
+          (point, index) =>
+            `${index ? "L" : "M"}${point.x.toFixed(2)},${point.y.toFixed(2)}`,
+        )
+        .join(" ");
+    stages.append(
+      svgNode("path", {
+        d: segmentPath(peakIndex, troughIndex),
+        class: "drawdown-decline-line",
+      }),
+      svgNode("path", {
+        d: segmentPath(troughIndex, repairEndIndex),
+        class: recoveryIndex === null
+          ? "drawdown-recovery-line pending"
+          : "drawdown-recovery-line",
+      }),
+    );
+
+    const addMarker = (point, className, label, position = "above") => {
+      const marker = svgNode("g", { class: `drawdown-marker ${className}` });
+      const labelWidth = Math.max(92, label.length * 12 + 24);
+      const labelX = Math.min(
+        width - margin.right - labelWidth,
+        Math.max(margin.left, point.x - labelWidth / 2),
+      );
+      const labelY =
+        position === "below"
+          ? Math.min(height - margin.bottom - 30, point.y + 20)
+          : Math.max(margin.top + 4, point.y - 38);
+      marker.append(
+        svgNode("line", {
+          x1: point.x,
+          y1: point.y,
+          x2: point.x,
+          y2: position === "below" ? labelY : labelY + 26,
+        }),
+        svgNode("rect", {
+          x: labelX,
+          y: labelY,
+          width: labelWidth,
+          height: 26,
+          rx: 3,
+        }),
+      );
+      const labelNode = svgNode("text", {
+        x: labelX + labelWidth / 2,
+        y: labelY + 17,
+        "text-anchor": "middle",
+      });
+      labelNode.textContent = label;
+      marker.append(
+        svgNode("circle", { cx: point.x, cy: point.y, r: 5 }),
+        labelNode,
+      );
+      stages.append(marker);
+    };
+
+    addMarker(
+      navPlotPoints[troughIndex],
+      "maximum",
+      `最大回撤 ${Math.abs(maxDrawdown).toFixed(2)}%`,
+      "below",
+    );
+    addMarker(
+      navPlotPoints[repairEndIndex],
+      recoveryIndex === null ? "repair pending" : "repair",
+      recoveryIndex === null
+        ? `修复中 · 已 ${elapsedRecoveryDays} 天`
+        : `${recoveryDays} 天修复`,
+      "above",
+    );
+    svg.append(stages);
+  }
 
   if (metric === "单位净值") {
     const dividends = currentDividends.filter(
@@ -818,6 +1314,13 @@ function renderNavChart(
       y2: height - margin.bottom,
     }),
     svgNode("circle", { cx: "0", cy: "0", r: "5" }),
+    svgNode("circle", {
+      cx: "0",
+      cy: "0",
+      r: "4.5",
+      class: "benchmark-crosshair-point",
+      visibility: "hidden",
+    }),
   );
   svg.append(crosshair);
 
@@ -825,24 +1328,54 @@ function renderNavChart(
   const lastValue = Number(rows.at(-1)[config.valueKey]);
   const changeElement = document.querySelector("#nav-range-change");
   if (isDrawdownView) {
-    const currentDrawdown = lastValue;
-    const maxDrawdown = Math.min(...values);
-    changeElement.textContent = formatPercent(currentDrawdown);
-    changeElement.className = movementClass(currentDrawdown);
-    text("#nav-range-high", formatPercent(maxDrawdown));
+    const {
+      maxDrawdown,
+      peakIndex,
+      troughIndex,
+      recoveryIndex,
+      recoveryDays,
+      elapsedRecoveryDays,
+    } = drawdownAnalysis;
+    const hasDrawdown = maxDrawdown < -0.000001;
+    changeElement.textContent = `${Math.abs(maxDrawdown).toFixed(2)}%`;
+    changeElement.className = hasDrawdown ? "drawdown-value" : "";
+    text(
+      "#nav-range-high",
+      hasDrawdown
+        ? recoveryIndex === null
+          ? `修复中 · 已 ${elapsedRecoveryDays} 天`
+          : `${recoveryDays} 天`
+        : "0 天",
+    );
     text(
       "#nav-range-low",
-      currentDrawdown >= -0.005 ? "已创新高" : "修复中",
+      hasDrawdown
+        ? `${formatChartDate(rows[peakIndex].日期)} — ${formatChartDate(
+            rows[troughIndex].日期,
+          )}`
+        : "区间内无回撤",
     );
     text(
       "#nav-range-dates",
-      `${formatChartDate(rows[0].日期)} — ${formatChartDate(rows.at(-1).日期)}`,
+      hasDrawdown
+        ? `${formatChartDate(rows[troughIndex].日期)} — ${
+            recoveryIndex === null
+              ? "至今（修复中）"
+              : formatChartDate(rows[recoveryIndex].日期)
+          }`
+        : "持续创新高",
     );
     svg.setAttribute(
       "aria-label",
       `${formatChartDate(rows[0].日期)}至${formatChartDate(
         rows.at(-1).日期,
-      )}的回撤曲线，最大回撤${formatPercent(maxDrawdown)}`,
+      )}的区间收益曲线，最大回撤${Math.abs(maxDrawdown).toFixed(2)}%，${
+        hasDrawdown
+          ? recoveryIndex === null
+            ? `尚未修复，已历时${elapsedRecoveryDays}天`
+            : `历时${recoveryDays}天修复`
+          : "区间内无回撤"
+      }`,
     );
     return;
   }
@@ -852,8 +1385,31 @@ function renderNavChart(
       : ((lastValue / firstValue) - 1) * 100;
   changeElement.textContent = formatPercent(periodChange);
   changeElement.className = movementClass(periodChange);
-  text("#nav-range-high", formatNavValue(Math.max(...values), metric));
-  text("#nav-range-low", formatNavValue(Math.min(...values), metric));
+  if (isPerformanceView) {
+    const benchmarkChange = benchmarkPlotPoints.length
+      ? benchmarkPlotPoints.at(-1).value
+      : null;
+    const relativeChange = Number.isFinite(benchmarkChange)
+      ? periodChange - benchmarkChange
+      : null;
+    const benchmarkElement = document.querySelector("#nav-range-high");
+    const relativeElement = document.querySelector("#nav-range-low");
+    benchmarkElement.textContent = Number.isFinite(benchmarkChange)
+      ? formatPercent(benchmarkChange)
+      : "—";
+    benchmarkElement.className = Number.isFinite(benchmarkChange)
+      ? movementClass(benchmarkChange)
+      : "";
+    relativeElement.textContent = Number.isFinite(relativeChange)
+      ? `${relativeChange > 0 ? "+" : ""}${relativeChange.toFixed(2)} 个百分点`
+      : "—";
+    relativeElement.className = Number.isFinite(relativeChange)
+      ? movementClass(relativeChange)
+      : "";
+  } else {
+    text("#nav-range-high", formatNavValue(Math.max(...values), metric));
+    text("#nav-range-low", formatNavValue(Math.min(...values), metric));
+  }
   text(
     "#nav-range-dates",
     `${formatChartDate(rows[0].日期)} — ${formatChartDate(rows.at(-1).日期)}`,
@@ -862,8 +1418,57 @@ function renderNavChart(
     "aria-label",
     `${formatChartDate(rows[0].日期)}至${formatChartDate(
       rows.at(-1).日期,
-    )}的${config.tooltipLabel}曲线，区间变化${formatPercent(periodChange)}`,
+    )}的${config.tooltipLabel}曲线，基金涨幅${formatPercent(periodChange)}${
+      benchmarkPlotPoints.length
+        ? `，${currentTrackBenchmark.简称}涨幅${formatPercent(
+            benchmarkPlotPoints.at(-1).value,
+          )}`
+        : ""
+    }`,
   );
+}
+
+async function loadTrackBenchmark(key, reason = "") {
+  currentTrackBenchmarkKey = key;
+  const requestId = ++trackBenchmarkRequestId;
+  const select = document.querySelector("#track-benchmark-select");
+  const status = document.querySelector("#track-benchmark-status");
+  select.value = key;
+  select.disabled = true;
+  status.textContent = "正在加载赛道基准…";
+
+  try {
+    let payload = trackBenchmarkCache.get(key);
+    if (!payload) {
+      const response = await fetch(`/api/benchmarks/${key}`);
+      payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.detail || "赛道基准加载失败");
+      }
+      trackBenchmarkCache.set(key, payload);
+    }
+    if (requestId !== trackBenchmarkRequestId) return;
+    currentTrackBenchmark = payload;
+    document.querySelector("#benchmark-legend-label").textContent =
+      payload.简称 ?? payload.名称;
+    status.textContent = reason || payload.说明 || "赛道基准已加载";
+  } catch (error) {
+    if (requestId !== trackBenchmarkRequestId) return;
+    currentTrackBenchmark = null;
+    document.querySelector("#benchmark-legend-label").textContent = "赛道基准";
+    status.textContent = error.message || "赛道基准暂不可用";
+  } finally {
+    if (requestId === trackBenchmarkRequestId) {
+      select.disabled = false;
+      renderNavChart(currentNavRange, currentNavMetric);
+    }
+  }
+}
+
+function initializeTrackBenchmark(recommendation = {}) {
+  const key = recommendation.key || "hs300";
+  currentTrackBenchmark = null;
+  loadTrackBenchmark(key, recommendation.理由 || "");
 }
 
 function firstNavOnOrAfter(rows, requestedDate) {
@@ -1828,6 +2433,7 @@ function renderFund(data) {
   renderFundProfile(basic);
   renderPerformance(performance);
   renderNavHistory(data.净值曲线);
+  initializeTrackBenchmark(data.赛道基准建议);
   renderHoldings(data.基金持仓);
   renderWarnings(data.提示);
 }
@@ -1901,6 +2507,12 @@ document.querySelectorAll("[data-periodic-unit]").forEach((button) => {
 });
 
 document
+  .querySelector("#track-benchmark-select")
+  .addEventListener("change", (event) => {
+    loadTrackBenchmark(event.target.value);
+  });
+
+document
   .querySelector("#nav-custom-range")
   .addEventListener("submit", (event) => {
     event.preventDefault();
@@ -1941,19 +2553,48 @@ navChart.addEventListener("pointermove", (event) => {
     Math.abs(point.x - chartX) < Math.abs(best.x - chartX) ? point : best,
   );
   const crosshair = document.querySelector("#nav-crosshair");
-  const [line, circle] = crosshair.children;
+  const [line, circle, benchmarkCircle] = crosshair.children;
   line.setAttribute("x1", nearest.x);
   line.setAttribute("x2", nearest.x);
   circle.setAttribute("cx", nearest.x);
   circle.setAttribute("cy", nearest.y);
+  const nearestBenchmark = benchmarkPlotPoints.length
+    ? benchmarkPlotPoints.reduce((best, point) =>
+        Math.abs(point.x - nearest.x) < Math.abs(best.x - nearest.x)
+          ? point
+          : best,
+      )
+    : null;
+  if (benchmarkCircle) {
+    benchmarkCircle.setAttribute(
+      "visibility",
+      nearestBenchmark ? "visible" : "hidden",
+    );
+    if (nearestBenchmark) {
+      benchmarkCircle.setAttribute("cx", nearestBenchmark.x);
+      benchmarkCircle.setAttribute("cy", nearestBenchmark.y);
+    }
+  }
   crosshair.setAttribute("visibility", "visible");
 
   navTooltip.querySelector("span").textContent = formatChartDate(nearest.日期);
   navTooltip.querySelector("strong").textContent =
-    `${navMetricConfig[currentNavMetric].tooltipLabel} ${formatNavValue(
-      nearest.value,
-      currentNavMetric,
-    )}`;
+    currentNavMetric === "回撤修复"
+      ? `基金回撤 ${formatPercent(nearest.回撤)}${
+          nearestBenchmark
+            ? ` · ${currentTrackBenchmark?.简称 ?? "赛道"}回撤 ${formatPercent(
+                nearestBenchmark.回撤,
+              )}`
+            : ""
+        }`
+      : currentNavMetric === "累计收益率" && nearestBenchmark
+        ? `基金 ${formatPercent(nearest.value)} · ${
+            currentTrackBenchmark?.简称 ?? "赛道"
+          } ${formatPercent(nearestBenchmark.value)}`
+      : `${navMetricConfig[currentNavMetric].tooltipLabel} ${formatNavValue(
+          nearest.value,
+          currentNavMetric,
+        )}`;
   navTooltip.style.left = `${(nearest.x / 1000) * bounds.width}px`;
   navTooltip.style.top = `${(nearest.y / 360) * bounds.height}px`;
   navTooltip.classList.toggle("align-right", nearest.x > 820);
