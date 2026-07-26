@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Any
 
@@ -78,7 +79,28 @@ TRACK_BENCHMARKS: dict[str, dict[str, Any]] = {
             "hs300": 0.2,
         },
     },
+    "equity_bond_80_20": {
+        "名称": "沪深300/中债 80/20赛道基准",
+        "简称": "沪深300/中债 80/20",
+        "说明": "80%沪深300 + 20%中债新综合财富，每日定权复合",
+        "类型": "股债组合",
+        "source": "composite",
+        "components": {
+            "hs300": 0.8,
+            "cbond_composite": 0.2,
+        },
+    },
 }
+
+DISCLOSED_BENCHMARK_PATTERNS: tuple[tuple[str, str], ...] = (
+    (r"沪深\s*300", "hs300"),
+    (r"中证\s*500", "csi500"),
+    (r"中证\s*800", "csi800"),
+    (r"中债.*(?:1\s*年以下|一年以下|短久期|短债)", "cbond_short"),
+    (r"中债.*信用债", "cbond_credit"),
+    (r"中债.*(?:国债.*政策性|政策性.*国债)", "cbond_rates"),
+    (r"中债.*(?:新)?综合.*财富", "cbond_composite"),
+)
 
 
 def track_benchmark_catalog() -> list[dict[str, Any]]:
@@ -189,8 +211,18 @@ def recommend_track_benchmark(
     fund_name: str | None,
     fund_type: str | None,
     bond_structure: list[dict[str, Any]] | None = None,
+    performance_benchmark: str | None = None,
 ) -> dict[str, str]:
-    """根据基金类型与已披露债券结构给出赛道基准建议。"""
+    """优先匹配基金业绩基准，再按基金类型与债券结构给出建议。"""
+    disclosed = str(performance_benchmark or "")
+    for pattern, key in DISCLOSED_BENCHMARK_PATTERNS:
+        if re.search(pattern, disclosed, flags=re.IGNORECASE):
+            name = TRACK_BENCHMARKS[key].get("简称", TRACK_BENCHMARKS[key]["名称"])
+            return {
+                "key": key,
+                "理由": f"基金披露的业绩比较基准包含{name}，优先采用同一指数作为赛道基准。",
+            }
+
     descriptor = f"{fund_name or ''} {fund_type or ''}"
     if any(word in descriptor for word in ("固收+", "偏债混合", "混合二级")):
         return {

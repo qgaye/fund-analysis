@@ -1,26 +1,36 @@
 import unittest
 from datetime import date
+from unittest.mock import Mock, patch
 
 import pandas as pd
 
 from fund_lookup import (
-    _clean,
     _bond_credit_structure,
+    _build_peer_performance,
+    _clean,
     _dividend_history,
+    _enrich_stock_holdings,
     _extract_related_etf_code,
     _extract_scale_details,
     _fund_age,
+    _holdings_for_period,
     _latest_holdings,
     _latest_industry_allocation,
+    _load_stock_fundamentals,
+    _load_stock_quotes,
+    _load_return_comparison_em,
     _nav_history,
     _normalize_code,
     _parse_asset_allocation_report,
     _parse_bond_type_structure,
+    _parse_fof_fund_holdings,
+    _parse_target_fund_holdings,
     _parse_holder_structure,
     _parse_purchase_fee_table,
     _pick,
     _report_period,
     _quarter_end_from_period,
+    _quarter_report_catalog,
     _year_to_date_return,
 )
 
@@ -38,6 +48,72 @@ class FundLookupTests(unittest.TestCase):
 
     def test_clean_serializes_date(self) -> None:
         self.assertEqual(_clean(date(2026, 7, 25)), "2026-07-25")
+
+    @patch("fund_lookup.requests.get")
+    def test_load_return_comparison_keeps_peer_average(self, mocked_get) -> None:
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "Data": [
+                {
+                    "name": "测试基金",
+                    "data": [
+                        [1735689600000, 0.0],
+                        [1767225600000, 12.0],
+                    ],
+                },
+                {
+                    "name": "同类平均",
+                    "data": [
+                        [1735689600000, 0.0],
+                        [1767225600000, 10.0],
+                    ],
+                },
+                {"name": "沪深300", "data": []},
+            ]
+        }
+        mocked_get.return_value = response
+
+        frame = _load_return_comparison_em("000001", "1年")
+
+        self.assertEqual(list(frame.columns), ["日期", "累计收益率", "同类平均"])
+        self.assertEqual(frame.iloc[-1]["累计收益率"], 12.0)
+        self.assertEqual(frame.iloc[-1]["同类平均"], 10.0)
+
+    def test_build_peer_performance_parses_rank_and_relative_ratio(self) -> None:
+        achievement = pd.DataFrame(
+            [
+                {
+                    "周期": "近1年",
+                    "周期收益同类排名": "5/100",
+                }
+            ]
+        )
+        comparison = _build_peer_performance(
+            "股票型-标准指数",
+            achievement,
+            {
+                "1y": pd.DataFrame(
+                    [
+                        {
+                            "日期": date(2026, 7, 24),
+                            "累计收益率": 12.0,
+                            "同类平均": 10.0,
+                        }
+                    ]
+                )
+            },
+            {"近1年": 12.0},
+        )
+
+        row = comparison["阶段"]["近1年"]
+        self.assertEqual(comparison["同类"], "股票型-标准指数")
+        self.assertEqual(row["同类平均"], 10.0)
+        self.assertEqual(row["相对同类差异比例"], 20.0)
+        self.assertEqual(row["超额收益"], 2.0)
+        self.assertEqual(row["排名"], 5)
+        self.assertEqual(row["同类数量"], 100)
+        self.assertEqual(row["排名分位"], 5.0)
 
     def test_fund_age_uses_complete_months(self) -> None:
         self.assertEqual(
@@ -160,6 +236,218 @@ class FundLookupTests(unittest.TestCase):
         self.assertEqual(holdings[0]["持仓排名"], 1)
         self.assertNotIn("序号", holdings[0])
 
+    @patch("fund_lookup.requests.get")
+    def test_load_stock_quotes_parses_batch_response(self, mocked_get) -> None:
+        response = Mock()
+        response.content = (
+            'var hq_str_sh600519="贵州茅台,1300,1290,1297.41,0,0,0,0,0,0,'
+            '0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,'
+            '2026-07-24,15:00:00";'
+        ).encode("gbk")
+        response.raise_for_status.return_value = None
+        mocked_get.return_value = response
+
+        quotes = _load_stock_quotes(["600519"])
+
+        self.assertEqual(quotes["600519"]["最新价"], 1297.41)
+        self.assertEqual(quotes["600519"]["行情日期"], "2026-07-24")
+
+    @patch("fund_lookup.ak.stock_profile_cninfo")
+    @patch("fund_lookup.ak.stock_individual_info_em")
+    @patch("fund_lookup.ak.stock_history_dividend_detail")
+    @patch("fund_lookup.ak.stock_zh_valuation_comparison_em")
+    def test_load_stock_fundamentals_calculates_roe_and_dividend_yield(
+        self,
+        mocked_valuation,
+        mocked_dividend,
+        mocked_stock_info,
+        mocked_profile,
+    ) -> None:
+        mocked_valuation.return_value = pd.DataFrame(
+            [
+                {
+                    "代码": "行业平均",
+                    "市盈率-TTM": 2.9,
+                    "市净率-MRQ": 2.5,
+                },
+                {
+                    "代码": "600519",
+                    "市盈率-TTM": 20.0,
+                    "市净率-MRQ": 2.0,
+                }
+            ]
+        )
+        mocked_dividend.return_value = pd.DataFrame(
+            [
+                {"除权除息日": "2026-06-20", "派息": 5.0},
+                {"除权除息日": "2025-06-20", "派息": 8.0},
+            ]
+        )
+        mocked_profile.return_value = pd.DataFrame(
+            [{"A股代码": "600519", "所属行业": "酒、饮料和精制茶制造业"}]
+        )
+
+        metrics = _load_stock_fundamentals(
+            "600519",
+            {"最新价": 10.0, "行情日期": "2026-07-24"},
+        )
+
+        self.assertEqual(metrics["PE"], 20.0)
+        self.assertEqual(metrics["PB"], 2.0)
+        self.assertEqual(metrics["ROE"], 10.0)
+        self.assertEqual(metrics["股息率"], 5.0)
+        self.assertEqual(metrics["所属行业"], "酒、饮料和精制茶制造业")
+        mocked_stock_info.assert_not_called()
+
+    @patch("fund_lookup.ak.stock_profile_cninfo")
+    @patch("fund_lookup.ak.stock_individual_info_em")
+    @patch("fund_lookup.ak.stock_history_dividend_detail")
+    @patch("fund_lookup.requests.get")
+    @patch("fund_lookup.ak.stock_zh_valuation_comparison_em")
+    def test_stock_fundamentals_falls_back_to_raw_valuation_response(
+        self,
+        mocked_valuation,
+        mocked_get,
+        mocked_dividend,
+        mocked_stock_info,
+        mocked_profile,
+    ) -> None:
+        mocked_valuation.side_effect = KeyError("missing comparison column")
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "result": {
+                "data": [
+                    {
+                        "CORRE_SECURITY_CODE": "000001",
+                        "PE_TTM": 5.0,
+                        "PB_MRQ": 0.5,
+                    }
+                ]
+            }
+        }
+        mocked_get.return_value = response
+        mocked_dividend.return_value = pd.DataFrame()
+        mocked_profile.side_effect = RuntimeError("cninfo unavailable")
+        mocked_stock_info.return_value = pd.DataFrame(
+            [{"item": "行业", "value": "银行"}]
+        )
+
+        metrics = _load_stock_fundamentals(
+            "000001",
+            {"最新价": 10.0, "行情日期": "2026-07-24"},
+        )
+
+        self.assertEqual(metrics["PE"], 5.0)
+        self.assertEqual(metrics["PB"], 0.5)
+        self.assertEqual(metrics["ROE"], 10.0)
+        self.assertEqual(metrics["所属行业"], "银行")
+
+    @patch("fund_lookup._load_stock_fundamentals")
+    @patch("fund_lookup._load_stock_quotes")
+    def test_enrich_stock_holdings_builds_weighted_summary(
+        self,
+        mocked_quotes,
+        mocked_fundamentals,
+    ) -> None:
+        mocked_quotes.return_value = {}
+        metrics = {
+            "000001": {
+                "PE": 10.0,
+                "PB": 1.0,
+                "ROE": 10.0,
+                "股息率": 4.0,
+                "最新价": 12.0,
+                "行情日期": "2026-07-24",
+                "_估值错误": None,
+                "_分红错误": None,
+            },
+            "000002": {
+                "PE": 20.0,
+                "PB": 2.0,
+                "ROE": 10.0,
+                "股息率": 2.0,
+                "最新价": 8.0,
+                "行情日期": "2026-07-24",
+                "_估值错误": None,
+                "_分红错误": None,
+            },
+        }
+        mocked_fundamentals.side_effect = (
+            lambda code, quote: metrics[code]
+        )
+
+        rows, summary = _enrich_stock_holdings(
+            [
+                {"股票代码": "000001", "占净值比例": 6.0},
+                {"股票代码": "000002", "占净值比例": 4.0},
+            ],
+            [],
+        )
+
+        self.assertEqual(rows[0]["PE"], 10.0)
+        self.assertEqual(summary["覆盖数量"], 2)
+        self.assertEqual(summary["组合指标"]["PE"], 12.5)
+        self.assertEqual(summary["组合指标"]["股息率"], 3.2)
+
+    def test_holdings_for_period_selects_requested_quarter(self) -> None:
+        frame = pd.DataFrame(
+            [
+                {
+                    "序号": 1,
+                    "股票代码": "000001",
+                    "占净值比例": 3.0,
+                    "季度": "2025年1季度股票投资明细",
+                },
+                {
+                    "序号": 2,
+                    "股票代码": "000002",
+                    "占净值比例": 5.0,
+                    "季度": "2025年2季度股票投资明细",
+                },
+            ]
+        )
+
+        holdings, period = _holdings_for_period(
+            frame,
+            2025,
+            2,
+            limit=20,
+        )
+
+        self.assertEqual(period, "2025年2季度股票投资明细")
+        self.assertEqual([row["股票代码"] for row in holdings], ["000002"])
+
+    def test_quarter_report_catalog_builds_pdf_links(self) -> None:
+        frame = pd.DataFrame(
+            [
+                {
+                    "公告标题": "测试基金2025年第2季度报告",
+                    "公告日期": date(2025, 7, 21),
+                    "报告ID": "AN202507210001",
+                },
+                {
+                    "公告标题": "测试基金2025年中期报告",
+                    "公告日期": date(2025, 8, 30),
+                    "报告ID": "AN202508300001",
+                },
+                {
+                    "公告标题": "测试基金2025年第1季度报告",
+                    "公告日期": date(2025, 4, 21),
+                    "报告ID": "AN202504210001",
+                },
+            ]
+        )
+
+        reports = _quarter_report_catalog(frame)
+
+        self.assertEqual([report["key"] for report in reports], ["2025Q2", "2025Q1"])
+        self.assertEqual(reports[0]["报告期"], "2025年第2季度")
+        self.assertEqual(
+            reports[0]["链接"],
+            "https://pdf.dfcfw.com/pdf/H2_AN202507210001_1.pdf",
+        )
+
     def test_latest_industry_allocation_selects_latest_period(self) -> None:
         frame = pd.DataFrame(
             [
@@ -250,6 +538,76 @@ class FundLookupTests(unittest.TestCase):
 
         self.assertEqual(allocation[1], {"资产类别": "债券", "占比": 97.25})
         self.assertEqual(allocation[3], {"资产类别": "其他", "占比": 2.75})
+
+    def test_parse_asset_allocation_allows_omitted_fund_investment(self) -> None:
+        report_text = """
+        5.1 报告期末基金资产组合情况
+        1 权益投资 46,823,250,741.18 99.45
+        2 固定收益投资 - -
+        7 其他资产 19,778,958.11 0.04
+        8 合计 47,083,706,213.55 100.00
+        注：上表中的权益投资含可退替代款估值增值。
+        5.2期末投资目标基金明细
+        """
+
+        allocation = _parse_asset_allocation_report(report_text)
+
+        self.assertEqual(allocation[0], {"资产类别": "股票", "占比": 99.45})
+        self.assertEqual(allocation[2], {"资产类别": "基金", "占比": 0.0})
+        self.assertEqual(allocation[3], {"资产类别": "其他", "占比": 0.55})
+
+    def test_parse_target_fund_holding(self) -> None:
+        report_text = """
+        2.1.1目标基金基本情况
+        基金名称             易方达创业板交易型开放式指数证券投资基金
+        基金主代码            159915
+        基金运作方式           交易型开放式（ETF）
+        2.1.2目标基金产品说明
+
+        5.2期末投资目标基金明细
+        序号 基金名称 基金类型 运作方式 管理人 公允价值（元） 占基金资产净值比例（%）
+        1 易方达创业板交易型开放式指数证券投资基金
+          股票型 交易型开放式（ETF） 易方达基金管理有限公司
+          9,996,761,826.23 93.87
+        5.3 报告期末按行业分类的股票投资组合
+        """
+
+        holdings = _parse_target_fund_holdings(report_text)
+
+        self.assertEqual(
+            holdings,
+            [
+                {
+                    "持仓排名": 1,
+                    "持仓类型": "目标ETF",
+                    "基金代码": "159915",
+                    "基金名称": "易方达创业板交易型开放式指数证券投资基金",
+                    "运作方式": "交易型开放式（ETF）",
+                    "占净值比例": 93.87,
+                    "持仓市值": 999676.18,
+                }
+            ],
+        )
+
+    def test_parse_fof_fund_holdings(self) -> None:
+        report_text = """
+        §6 基金中基金
+        6.1 报告期末按公允价值占基金资产净值比例大小排序的前十名基金投资明细
+        序号 基金代码 基金名称 运作方式 持有份额 公允价值 占基金资产净值比例 是否关联方
+        1 020009 国泰金鹏蓝筹混合 契约型开放式 2,985,861.52 6,568,895.34 7.12 否
+        2 014642 摩根新兴动力混合C 契约型开放式 450,824.00 6,008,537.19 6.51 否
+        3 024170 信澳新能源产业股票C 契约型开放式
+          598,281.14 5,617,859.90 6.09 否
+        6.2 当期交易及持有基金产生的费用
+        """
+
+        holdings = _parse_fof_fund_holdings(report_text)
+
+        self.assertEqual(
+            [(row["基金代码"], row["占净值比例"]) for row in holdings],
+            [("020009", 7.12), ("014642", 6.51), ("024170", 6.09)],
+        )
+        self.assertTrue(all(row["持仓类型"] == "FOF" for row in holdings))
 
     def test_parse_bond_type_structure_splits_policy_financial_bonds(
         self,

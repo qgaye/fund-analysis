@@ -11,6 +11,9 @@ let currentCode = "";
 let currentHoldings = null;
 let currentHoldingType = "股票";
 let currentBondStructureView = "品种";
+let currentHoldingsPeriodKey = "";
+let currentQuarterReports = [];
+let holdingsRequestId = 0;
 let currentNavHistory = {};
 let currentNavRange = "1y";
 let currentNavMetric = "累计收益率";
@@ -20,10 +23,17 @@ let currentDividends = [];
 let navPlotPoints = [];
 let currentPeriodicUnit = "year";
 let currentPerformance = {};
+let currentPeerPerformance = {};
 let currentTrackBenchmark = null;
 let currentTrackBenchmarkKey = "";
 let trackBenchmarkRequestId = 0;
 let benchmarkPlotPoints = [];
+let currentStockDetail = null;
+let currentStockRange = "1y";
+let currentStockCode = "";
+let currentStockFallback = {};
+let stockDetailRequestId = 0;
+let stockPlotPoints = [];
 const trackBenchmarkCache = new Map();
 
 const palette = [
@@ -50,7 +60,7 @@ const navMetricConfig = {
   阶段收益: {
     valueKey: "累计收益率",
     subtitle: "近 1 天 / 1 月 / 3 月 / 6 月 / 今年以来 / 1 年 / 3 年及成立以来的阶段涨幅",
-    note: "阶段涨幅按相同起止日比较基金与所选赛道，并以百分点显示领先或落后。",
+    note: "同类由下游按基金类型划分；相对同类为基金涨幅与同类平均的相对差异比例，赛道差异继续按百分点展示。",
     tooltipLabel: "阶段涨幅",
     unit: "%",
   },
@@ -59,13 +69,6 @@ const navMetricConfig = {
     subtitle: "将历史现金分红加回后的净值走势",
     note: "累计净值将历史现金分红加回，减少除息断层；首末变化不等同于分红再投资收益率。",
     tooltipLabel: "累计净值",
-    unit: "元",
-  },
-  单位净值: {
-    valueKey: "单位净值",
-    subtitle: "每份基金的实际净值，保留分红除息变化",
-    note: "橙色虚线标记分红除息日；单位净值下跳通常是现金分红，不代表同等幅度亏损。",
-    tooltipLabel: "单位净值",
     unit: "元",
   },
   分红记录: {
@@ -78,14 +81,14 @@ const navMetricConfig = {
   周期收益: {
     valueKey: "累计净值",
     subtitle: "各自然年 / 季度 / 月内的独立涨跌幅",
-    note: "基金按累计净值计算并与所选赛道采用相同起止日；每格展示自然年 / 季度 / 月内的基金、赛道和相对涨幅。",
+    note: "基金按累计净值计算并与所选赛道采用相同起止日；每行展示自然年 / 季度 / 月内的基金、赛道和相对涨幅。",
     tooltipLabel: "周期涨幅",
     unit: "%",
   },
   回撤修复: {
     valueKey: "累计收益率",
     subtitle: "区间收益曲线中的最大回撤与修复阶段",
-    note: "基金最大回撤按区间收益指数计算，绿色标出回撤段、红色标出修复段；蓝色虚线同步展示所选赛道，悬浮可比较双方回撤。",
+    note: "基金与所选赛道采用相同区间计算最大回撤；基金以绿色/红色标出回撤与修复，蓝色标出赛道对应阶段，修复天数按自然日计算。",
     tooltipLabel: "区间收益",
     unit: "%",
   },
@@ -218,9 +221,62 @@ function benchmarkStageReturn(key) {
   return benchmarkReturnBetween(startByKey[key], end);
 }
 
-function renderPerformance(performance) {
+function optionalNumber(value) {
+  if (value == null || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function peerRankBand(peerRow = {}) {
+  const rank = optionalNumber(peerRow.排名);
+  const total = optionalNumber(peerRow.同类数量);
+  const reportedPercentile = optionalNumber(peerRow.排名分位);
+  const percentile = reportedPercentile != null
+    ? reportedPercentile
+    : rank != null && total != null && total > 0
+      ? (rank / total) * 100
+      : null;
+  if (!Number.isFinite(percentile)) {
+    return { className: "rank-neutral", label: "暂无分位", percentile: null };
+  }
+  if (percentile <= 5) {
+    return { className: "rank-front-5", label: "前5%", percentile };
+  }
+  if (percentile <= 10) {
+    return { className: "rank-front-10", label: "前10%", percentile };
+  }
+  if (percentile <= 20) {
+    return { className: "rank-front-20", label: "前20%", percentile };
+  }
+  if (percentile >= 95) {
+    return { className: "rank-back-5", label: "后5%", percentile };
+  }
+  if (percentile >= 90) {
+    return { className: "rank-back-10", label: "后10%", percentile };
+  }
+  if (percentile >= 80) {
+    return { className: "rank-back-20", label: "后20%", percentile };
+  }
+  return { className: "rank-middle", label: "中间区间", percentile };
+}
+
+function renderPerformance(
+  performance,
+  peerPerformance = currentPeerPerformance,
+) {
   currentPerformance = performance ?? {};
+  currentPeerPerformance = peerPerformance ?? {};
   const chart = document.querySelector("#performance-chart");
+  const peerContext = document.querySelector("#stage-peer-context");
+  const peerDetails = currentPeerPerformance.阶段 ?? {};
+  const peerType = currentPeerPerformance.同类;
+  peerContext.hidden = !peerType;
+  text("#stage-peer-type", peerType, "同类暂无");
+  text(
+    "#stage-peer-note",
+    currentPeerPerformance.说明,
+    "同类由下游数据源按基金类型划分。",
+  );
   const periods = [
     { label: "近1天", key: "日涨幅" },
     { label: "近1月", key: "近1月" },
@@ -241,8 +297,8 @@ function renderPerformance(performance) {
 
   periods.forEach(({ label: period, key }, index) => {
     const rawValue = currentPerformance[key];
-    const numeric = Number(rawValue);
-    const valid = Number.isFinite(numeric);
+    const numeric = optionalNumber(rawValue);
+    const valid = numeric != null;
     const item = document.createElement("div");
     const direction =
       !valid || numeric === 0 ? "neutral" : numeric > 0 ? "positive" : "negative";
@@ -255,6 +311,57 @@ function renderPerformance(performance) {
     const value = document.createElement("strong");
     value.textContent = valid ? formatPercent(numeric) : "—";
     value.className = valid ? movementClass(numeric) : "";
+
+    const peerRow = peerDetails[key] ?? {};
+    const peerAverage = optionalNumber(peerRow.同类平均);
+    const peerAverageValid = peerAverage != null;
+    const peerAverageValue = document.createElement("strong");
+    peerAverageValue.className = `peer-average-value ${
+      peerAverageValid ? movementClass(peerAverage) : ""
+    }`;
+    peerAverageValue.textContent = peerAverageValid
+      ? formatPercent(peerAverage)
+      : "—";
+
+    const calculatedPeerRelative =
+      valid && peerAverageValid && Math.abs(peerAverage) > 1e-12
+        ? ((numeric - peerAverage) / Math.abs(peerAverage)) * 100
+        : null;
+    const reportedPeerRelative = optionalNumber(
+      peerRow.相对同类差异比例,
+    );
+    const peerRelative = reportedPeerRelative != null
+      ? reportedPeerRelative
+      : calculatedPeerRelative;
+    const peerRelativeValue = document.createElement("strong");
+    peerRelativeValue.className = `peer-relative-value ${
+      Number.isFinite(peerRelative) ? movementClass(peerRelative) : ""
+    }`;
+    peerRelativeValue.textContent = Number.isFinite(peerRelative)
+      ? formatPercent(peerRelative)
+      : "—";
+    if (Number.isFinite(peerRelative)) {
+      const reportedExcess = optionalNumber(peerRow.超额收益);
+      const excess = reportedExcess != null
+        ? reportedExcess
+        : numeric - peerAverage;
+      peerRelativeValue.title =
+        `相对差异比例 =（基金涨幅－同类平均）÷同类平均绝对值；` +
+        `收益差 ${excess > 0 ? "+" : ""}${excess.toFixed(2)} 个百分点`;
+    }
+
+    const rankBand = peerRankBand(peerRow);
+    const rankCell = document.createElement("div");
+    rankCell.className = `peer-rank-cell ${rankBand.className}`;
+    const rankValue = document.createElement("strong");
+    rankValue.textContent = peerRow.同类排名 ?? "—";
+    const rankLabel = document.createElement("span");
+    rankLabel.textContent = peerRow.同类排名 ? rankBand.label : "排名暂无";
+    rankCell.append(rankValue, rankLabel);
+    if (Number.isFinite(rankBand.percentile)) {
+      rankCell.title =
+        `排名 ${peerRow.同类排名}，位于同类前 ${rankBand.percentile.toFixed(2)}%`;
+    }
 
     const benchmarkReturn = benchmarkStageReturn(key);
     const benchmarkValue = document.createElement("strong");
@@ -279,7 +386,15 @@ function renderPerformance(performance) {
       ? `${relativeReturn > 0 ? "+" : ""}${relativeReturn.toFixed(2)}pp`
       : "—";
 
-    item.append(label, value, benchmarkValue, relativeValue);
+    item.append(
+      label,
+      value,
+      peerAverageValue,
+      peerRelativeValue,
+      rankCell,
+      benchmarkValue,
+      relativeValue,
+    );
     chart.append(item);
   });
 }
@@ -348,9 +463,9 @@ function computePeriodicReturns(unit) {
 
 function renderPeriodicReturns(unit = currentPeriodicUnit) {
   currentPeriodicUnit = unit;
-  const grid = document.querySelector("#periodic-returns-grid");
+  const list = document.querySelector("#periodic-returns-grid");
   const empty = document.querySelector("#periodic-returns-empty");
-  grid.replaceChildren();
+  list.replaceChildren();
 
   document.querySelectorAll("[data-periodic-unit]").forEach((button) => {
     const active = button.dataset.periodicUnit === unit;
@@ -364,6 +479,12 @@ function renderPeriodicReturns(unit = currentPeriodicUnit) {
       : unit === "quarter"
         ? "各自然季度内的基金、赛道与相对涨跌幅"
         : "各自然月内的基金、赛道与相对涨跌幅",
+  );
+  text(
+    "#periodic-benchmark-heading",
+    currentTrackBenchmark?.简称
+      ? `${currentTrackBenchmark.简称}涨幅`
+      : "赛道涨幅",
   );
 
   let entries = computePeriodicReturns(unit);
@@ -388,7 +509,7 @@ function renderPeriodicReturns(unit = currentPeriodicUnit) {
             ? "positive"
             : "negative";
       const item = document.createElement("div");
-      item.className = `periodic-stat ${direction}`;
+      item.className = `periodic-return-row ${direction}`;
       item.style.animationDelay = `${Math.min(index * 40, 480)}ms`;
 
       const label = document.createElement("span");
@@ -398,51 +519,36 @@ function renderPeriodicReturns(unit = currentPeriodicUnit) {
       value.textContent = valid ? formatPercent(numeric) : "—";
       value.className = valid ? movementClass(numeric) : "";
 
-      const fundLabel = document.createElement("small");
-      fundLabel.textContent = "基金";
-      const primary = document.createElement("div");
-      primary.className = "periodic-primary";
-      primary.append(fundLabel, value);
-
       const benchmarkReturn = benchmarkReturnBetween(
         entry.startDate,
         entry.endDate,
       );
-      const benchmarkValue = document.createElement("b");
-      benchmarkValue.className = Number.isFinite(benchmarkReturn)
-        ? movementClass(benchmarkReturn)
-        : "";
+      const benchmarkValue = document.createElement("strong");
+      benchmarkValue.className = `benchmark-value ${
+        Number.isFinite(benchmarkReturn)
+          ? movementClass(benchmarkReturn)
+          : ""
+      }`;
       benchmarkValue.textContent = Number.isFinite(benchmarkReturn)
         ? formatPercent(benchmarkReturn)
         : "—";
-      const benchmarkLabel = document.createElement("small");
-      benchmarkLabel.textContent =
-        currentTrackBenchmark?.简称 ?? "赛道";
-      const secondary = document.createElement("div");
-      secondary.className = "periodic-secondary";
-      secondary.append(benchmarkLabel, benchmarkValue);
 
       const relativeReturn = valid && Number.isFinite(benchmarkReturn)
         ? numeric - benchmarkReturn
         : null;
-      const relative = document.createElement("em");
-      relative.className = Number.isFinite(relativeReturn)
-        ? movementClass(relativeReturn)
-        : "";
+      const relative = document.createElement("strong");
+      relative.className = `relative-value ${
+        Number.isFinite(relativeReturn) ? movementClass(relativeReturn) : ""
+      }`;
       relative.textContent = Number.isFinite(relativeReturn)
-        ? `${relativeReturn >= 0 ? "领先" : "落后"} ${Math.abs(
-            relativeReturn,
-          ).toFixed(2)}pp`
-        : "相对赛道 —";
+        ? `${relativeReturn > 0 ? "+" : ""}${relativeReturn.toFixed(2)}pp`
+        : "—";
 
-      const marker = document.createElement("i");
-      marker.setAttribute("aria-hidden", "true");
-
-      item.append(label, primary, secondary, relative, marker);
+      item.append(label, value, benchmarkValue, relative);
       if (entry.partial) {
         item.title = `${entry.label}为区间起点，涨跌幅以本期首个净值为基准。`;
       }
-      grid.append(item);
+      list.append(item);
     });
 }
 
@@ -531,29 +637,7 @@ function daysBetween(start, end) {
   return Math.max(0, Math.round((endTime - startTime) / 86400000));
 }
 
-function computeDrawdownAnalysis(range) {
-  let returnRows =
-    range === "custom"
-      ? customReturnRows()
-      : currentNavHistory?.累计收益率?.区间?.[range] ?? [];
-
-  // 上游偶尔缺少某个收益区间，用单位净值首日归零作为降级数据源。
-  if (returnRows.length < 2) {
-    const unitRows = currentNavHistory?.单位净值?.明细 ?? [];
-    const filtered =
-      range === "custom"
-        ? filterCustomRows(unitRows)
-        : filterNavRows(unitRows, range);
-    const baseNav = Number(filtered[0]?.单位净值);
-    returnRows =
-      Number.isFinite(baseNav) && baseNav > 0
-        ? filtered.map((row) => ({
-            日期: row.日期,
-            累计收益率: (Number(row.单位净值) / baseNav - 1) * 100,
-          }))
-        : [];
-  }
-
+function analyzeDrawdownRows(returnRows) {
   const selected = returnRows
     .map((row) => ({
       日期: row.日期,
@@ -631,6 +715,32 @@ function computeDrawdownAnalysis(range) {
     recoveryDays,
     elapsedRecoveryDays,
   };
+}
+
+function computeDrawdownAnalysis(range) {
+  let returnRows =
+    range === "custom"
+      ? customReturnRows()
+      : currentNavHistory?.累计收益率?.区间?.[range] ?? [];
+
+  // 上游偶尔缺少某个收益区间，用单位净值首日归零作为降级数据源。
+  if (returnRows.length < 2) {
+    const unitRows = currentNavHistory?.单位净值?.明细 ?? [];
+    const filtered =
+      range === "custom"
+        ? filterCustomRows(unitRows)
+        : filterNavRows(unitRows, range);
+    const baseNav = Number(filtered[0]?.单位净值);
+    returnRows =
+      Number.isFinite(baseNav) && baseNav > 0
+        ? filtered.map((row) => ({
+            日期: row.日期,
+            累计收益率: (Number(row.单位净值) / baseNav - 1) * 100,
+          }))
+        : [];
+  }
+
+  return analyzeDrawdownRows(returnRows);
 }
 
 function computeDrawdownRows(range) {
@@ -806,16 +916,56 @@ function benchmarkRowsForChart(fundRows) {
   return rows;
 }
 
-function addDrawdownDepth(rows) {
-  let peak = -Infinity;
-  return rows.map((row) => {
-    const returnIndex = 1 + Number(row.累计收益率) / 100;
-    peak = Math.max(peak, returnIndex);
-    return {
-      ...row,
-      回撤: peak > 0 ? (returnIndex / peak - 1) * 100 : 0,
-    };
-  });
+function recoveryDurationLabel(analysis) {
+  if (!analysis?.rows?.length) return "—";
+  if (analysis.maxDrawdown >= -0.000001) return "0 天";
+  return analysis.recoveryIndex === null
+    ? `修复中 · 已 ${analysis.elapsedRecoveryDays} 天`
+    : `${analysis.recoveryDays} 天`;
+}
+
+function drawdownAriaDescription(analysis) {
+  if (!analysis?.rows?.length) return "暂无";
+  const drawdown = Math.abs(analysis.maxDrawdown).toFixed(2);
+  if (analysis.maxDrawdown >= -0.000001) {
+    return `${drawdown}%，区间内无回撤`;
+  }
+  return analysis.recoveryIndex === null
+    ? `${drawdown}%，尚未修复，已历时${analysis.elapsedRecoveryDays}天`
+    : `${drawdown}%，历时${analysis.recoveryDays}天修复`;
+}
+
+function renderDrawdownComparison(fundAnalysis, benchmarkAnalysis) {
+  const panel = document.querySelector("#drawdown-comparison");
+  const benchmarkName =
+    currentTrackBenchmark?.简称 ?? currentTrackBenchmark?.名称 ?? "赛道基准";
+  text("#drawdown-fund-heading", "基金");
+  text("#drawdown-benchmark-heading", benchmarkName);
+  text(
+    "#drawdown-fund-value",
+    fundAnalysis?.rows?.length
+      ? `${Math.abs(fundAnalysis.maxDrawdown).toFixed(2)}%`
+      : null,
+  );
+  text(
+    "#drawdown-benchmark-value",
+    benchmarkAnalysis?.rows?.length
+      ? `${Math.abs(benchmarkAnalysis.maxDrawdown).toFixed(2)}%`
+      : null,
+  );
+  text("#drawdown-fund-recovery", recoveryDurationLabel(fundAnalysis));
+  text(
+    "#drawdown-benchmark-recovery",
+    recoveryDurationLabel(benchmarkAnalysis),
+  );
+  panel.setAttribute(
+    "aria-label",
+    `基金最大回撤${drawdownAriaDescription(
+      fundAnalysis,
+    )}；${benchmarkName}最大回撤${drawdownAriaDescription(
+      benchmarkAnalysis,
+    )}`,
+  );
 }
 
 function formatNavValue(value, metric = currentNavMetric, axis = false) {
@@ -855,6 +1005,9 @@ function renderNavChart(
   const dividendPanel = document.querySelector("#dividend-history-panel");
   const periodicPanel = document.querySelector("#periodic-returns-panel");
   const stagePanel = document.querySelector("#stage-performance-panel");
+  const drawdownComparison = document.querySelector(
+    "#drawdown-comparison",
+  );
   const noData = document.querySelector("#no-nav-history");
   const tooltip = document.querySelector("#nav-chart-tooltip");
   const summary = document.querySelector(".nav-history-summary");
@@ -881,13 +1034,24 @@ function renderNavChart(
   dividendPanel.hidden = !isDividendView;
   periodicPanel.hidden = !isPeriodicView;
   stagePanel.hidden = !isStageView;
-  summary.hidden = isPeriodicView || isStageView;
+  drawdownComparison.hidden = !isDrawdownView;
+  summary.hidden = isPeriodicView || isStageView || isDrawdownView;
   summary.classList.toggle("drawdown-summary", isDrawdownView);
   document.querySelector("#nav-range-switcher").hidden =
     isPeriodicView || isStageView;
   document.querySelector("#track-benchmark-control").hidden = false;
   document.querySelector("#nav-chart-legend").hidden =
     !isBenchmarkCurveView;
+  text(
+    "#nav-chart-fund-legend",
+    isDrawdownView ? "基金回撤阶段" : "基金涨幅",
+  );
+  text(
+    "#benchmark-legend-label",
+    isDrawdownView
+      ? `${currentTrackBenchmark?.简称 ?? "赛道基准"}回撤阶段`
+      : currentTrackBenchmark?.简称 ?? "赛道基准",
+  );
 
   document.querySelectorAll("[data-nav-range]").forEach((button) => {
     const active = button.dataset.navRange === range;
@@ -962,6 +1126,9 @@ function renderNavChart(
     text("#nav-range-high", "—");
     text("#nav-range-low", "—");
     text("#nav-range-dates", "—");
+    if (isDrawdownView) {
+      renderDrawdownComparison(drawdownAnalysis, null);
+    }
     return;
   }
 
@@ -979,9 +1146,18 @@ function renderNavChart(
   const rawBenchmarkRows = isBenchmarkCurveView
     ? benchmarkRowsForChart(rows)
     : [];
+  const benchmarkDrawdownAnalysis = isDrawdownView
+    ? analyzeDrawdownRows(rawBenchmarkRows)
+    : null;
   const benchmarkRows = isDrawdownView
-    ? addDrawdownDepth(rawBenchmarkRows)
+    ? benchmarkDrawdownAnalysis.rows
     : rawBenchmarkRows;
+  if (isDrawdownView) {
+    renderDrawdownComparison(
+      drawdownAnalysis,
+      benchmarkDrawdownAnalysis,
+    );
+  }
   const benchmarkValues = benchmarkRows.map((row) => row.累计收益率);
   let minValue = Math.min(...values);
   let maxValue = Math.max(...values);
@@ -1119,7 +1295,7 @@ function renderNavChart(
       "text-anchor": index === 0 ? "start" : index === 4 ? "end" : "middle",
     });
     label.textContent = formatChartDate(
-      new Date(time).toISOString().slice(0, 10),
+      localIsoDate(new Date(time)),
       range !== "1m",
     );
     grid.append(label);
@@ -1259,46 +1435,45 @@ function renderNavChart(
     svg.append(stages);
   }
 
-  if (metric === "单位净值") {
-    const dividends = currentDividends.filter(
-      (dividend) =>
-        dividend.除息日 >= rows[0].日期 &&
-        dividend.除息日 <= rows.at(-1).日期,
-    );
-    const dividendGroup = svgNode("g", { class: "nav-dividends" });
-    dividends.forEach((dividend) => {
-      const time = new Date(`${dividend.除息日}T00:00:00`).getTime();
-      const nearest = navPlotPoints.reduce((best, point) => {
-        const pointTime = new Date(`${point.日期}T00:00:00`).getTime();
-        const bestTime = new Date(`${best.日期}T00:00:00`).getTime();
-        return Math.abs(pointTime - time) < Math.abs(bestTime - time)
-          ? point
-          : best;
-      });
-      const marker = svgNode("g");
-      const title = svgNode("title");
-      title.textContent = `${formatChartDate(dividend.除息日)} 分红：每份 ${
-        dividend.每份分红 === null
-          ? "—"
-          : formatNumber(dividend.每份分红, 4)
-      } 元`;
-      marker.append(
-        title,
-        svgNode("line", {
-          x1: nearest.x,
-          y1: nearest.y,
-          x2: nearest.x,
-          y2: height - margin.bottom,
-        }),
-        svgNode("circle", {
-          cx: nearest.x,
-          cy: nearest.y,
-          r: "3.5",
-        }),
-      );
-      dividendGroup.append(marker);
+  if (
+    isDrawdownView &&
+    benchmarkDrawdownAnalysis?.peakIndex !== null &&
+    benchmarkDrawdownAnalysis?.troughIndex !== null &&
+    benchmarkDrawdownAnalysis.maxDrawdown < -0.000001 &&
+    benchmarkPlotPoints.length
+  ) {
+    const {
+      peakIndex,
+      troughIndex,
+      recoveryIndex,
+    } = benchmarkDrawdownAnalysis;
+    const repairEndIndex =
+      recoveryIndex ?? benchmarkPlotPoints.length - 1;
+    const benchmarkStages = svgNode("g", {
+      class: "benchmark-drawdown-stages",
     });
-    svg.append(dividendGroup);
+    const benchmarkSegmentPath = (startIndex, endIndex) =>
+      benchmarkPlotPoints
+        .slice(startIndex, endIndex + 1)
+        .map(
+          (point, index) =>
+            `${index ? "L" : "M"}${point.x.toFixed(2)},${point.y.toFixed(2)}`,
+        )
+        .join(" ");
+    benchmarkStages.append(
+      svgNode("path", {
+        d: benchmarkSegmentPath(peakIndex, troughIndex),
+        class: "benchmark-drawdown-decline-line",
+      }),
+      svgNode("path", {
+        d: benchmarkSegmentPath(troughIndex, repairEndIndex),
+        class:
+          recoveryIndex === null
+            ? "benchmark-drawdown-recovery-line pending"
+            : "benchmark-drawdown-recovery-line",
+      }),
+    );
+    svg.append(benchmarkStages);
   }
 
   const crosshair = svgNode("g", {
@@ -1375,6 +1550,14 @@ function renderNavChart(
             ? `尚未修复，已历时${elapsedRecoveryDays}天`
             : `历时${recoveryDays}天修复`
           : "区间内无回撤"
+      }${
+        benchmarkDrawdownAnalysis?.rows?.length
+          ? `；${currentTrackBenchmark?.简称 ?? "赛道基准"}最大回撤${Math.abs(
+              benchmarkDrawdownAnalysis.maxDrawdown,
+            ).toFixed(2)}%，${recoveryDurationLabel(
+              benchmarkDrawdownAnalysis,
+            )}`
+          : ""
       }`,
     );
     return;
@@ -1761,6 +1944,7 @@ function renderTreemap(
   items,
   ariaLabel,
   weightScope = "基金净值",
+  onActivate = null,
 ) {
   container.replaceChildren();
   const normalized = items
@@ -1796,8 +1980,22 @@ function renderTreemap(
       ? "var(--ink)"
       : "var(--paper-light)";
     cell.style.setProperty("--cell-delay", `${Math.min(index * 45, 360)}ms`);
-    cell.tabIndex = 0;
-    cell.title = `${item.name}${item.code ? ` · ${item.code}` : ""}：占${weightScope} ${item.weight.toFixed(2)}%`;
+    const itemLabel = `${item.name}${item.code ? ` · ${item.code}` : ""}：占${weightScope} ${item.weight.toFixed(2)}%`;
+    const interactive = Boolean(onActivate && item.code);
+    cell.tabIndex = interactive ? 0 : -1;
+    cell.title = interactive ? `${itemLabel}，点击查看股票详情` : itemLabel;
+    if (interactive) {
+      const activate = () => onActivate(item);
+      cell.classList.add("interactive");
+      cell.setAttribute("role", "button");
+      cell.setAttribute("aria-label", `${itemLabel}，查看股票详情`);
+      cell.addEventListener("click", activate);
+      cell.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        activate();
+      });
+    }
 
     const name = document.createElement("span");
     name.className = "treemap-name";
@@ -1894,6 +2092,30 @@ function renderSectorMatrix(holdingGroup, type) {
       });
       viewTabs.append(button);
     });
+  } else if (type === "基金") {
+    const totals = new Map();
+    (holdingGroup?.明细 ?? []).forEach((row) => {
+      const fundType = row.基金类型 ?? row.运作方式 ?? "基金投资";
+      totals.set(
+        fundType,
+        (totals.get(fundType) ?? 0) + (Number(row.占净值比例) || 0),
+      );
+    });
+    group = {
+      报告期: holdingGroup?.报告期,
+      口径: holdingGroup?.口径,
+      说明: holdingGroup?.说明,
+    };
+    rows = [...totals].map(([基金类型, 占净值比例]) => ({
+      基金类型,
+      占净值比例,
+    }));
+    nameKey = "基金类型";
+    chartLabel = "基金投资结构矩阵图";
+    viewTabs.hidden = true;
+    text("#structure-map-label", "FUND EXPOSURE");
+    text("#structure-map-title", "基金投资结构");
+    text("#sector-total-share-label", "基金投资占净值");
   } else {
     group =
       type === "穿透"
@@ -1926,9 +2148,11 @@ function renderSectorMatrix(holdingGroup, type) {
       group.说明 ??
       (type === "债券"
         ? "最新季报暂未提供可解析的债券结构。"
-        : type === "穿透"
-        ? "AKShare 暂未返回目标 ETF 的行业配置。"
-        : "AKShare 暂无该基金的股票行业配置。");
+        : type === "基金"
+          ? "最新季报暂未提供可解析的基金投资结构。"
+          : type === "穿透"
+            ? "AKShare 暂未返回目标 ETF 的行业配置。"
+            : "AKShare 暂无该基金的股票行业配置。");
   }
   note.textContent = rows.length
     ? `${group.报告期 ?? "最新报告期"} · ${group.口径 ?? "股票行业配置"}${
@@ -1936,9 +2160,11 @@ function renderSectorMatrix(holdingGroup, type) {
       }`
     : type === "债券"
       ? "债券结构暂不可用，不根据名称猜测品种或期限。"
-      : type === "穿透"
-        ? "目标 ETF 暂无可用行业配置。"
-        : "仅展示官方披露数据，不根据证券名称推测行业。";
+      : type === "基金"
+        ? "基金投资结构来自季度报告披露。"
+        : type === "穿透"
+          ? "目标 ETF 暂无可用行业配置。"
+          : "仅展示官方披露数据，不根据证券名称推测行业。";
 }
 
 function renderAssetAllocation(allocation) {
@@ -1955,6 +2181,7 @@ function renderAssetAllocation(allocation) {
   bar.replaceChildren();
   stats.replaceChildren();
   text("#asset-allocation-period", allocation?.报告期, "暂无报告期");
+  renderTargetFundDisclosure();
 
   if (!details.length) {
     bar.classList.add("empty");
@@ -2012,6 +2239,428 @@ function renderAssetAllocation(allocation) {
   );
 }
 
+function renderTargetFundDisclosure() {
+  const panel = document.querySelector("#target-fund-disclosure");
+  const fundGroup = currentHoldings?.基金投资 ?? {};
+  const rows = fundGroup.明细 ?? [];
+  const targetFund =
+    fundGroup.类型 === "目标ETF" && rows.length === 1 ? rows[0] : null;
+
+  panel.hidden = !targetFund;
+  if (!targetFund) return;
+
+  text("#target-fund-name", targetFund.基金名称, "目标 ETF");
+  text("#target-fund-code", targetFund.基金代码, "代码未知");
+  text(
+    "#target-fund-weight",
+    targetFund.占净值比例 == null
+      ? "—"
+      : `${formatNumber(targetFund.占净值比例, 2)}%`,
+  );
+  text(
+    "#target-fund-market-value",
+    targetFund.持仓市值 == null
+      ? "—"
+      : `${formatNumber(targetFund.持仓市值, 2)} 万元`,
+  );
+  const penetrated = Boolean(currentHoldings?.ETF穿透?.可用);
+  const status = document.querySelector("#target-fund-status");
+  status.classList.toggle("pending", !penetrated);
+  status.querySelector("span").textContent = penetrated
+    ? "下方股票持仓已穿透自该基金"
+    : "目标 ETF 原始持仓";
+}
+
+function renderStockFundamentals(group, type) {
+  const panel = document.querySelector("#stock-fundamentals-panel");
+  const summary = group?.估值概览 ?? {};
+  const visible = type !== "债券" && Boolean(summary.可用);
+  panel.hidden = !visible;
+  if (!visible) return;
+
+  const aggregate = summary.组合指标 ?? {};
+  const coverage = summary.指标覆盖 ?? {};
+  text(
+    "#stock-fundamentals-coverage",
+    `${summary.覆盖数量 ?? 0} / ${summary.持仓数量 ?? 0}`,
+  );
+  text(
+    "#stock-weighted-pe",
+    aggregate.PE == null ? "—" : `${formatNumber(aggregate.PE, 2)}×`,
+  );
+  text(
+    "#stock-weighted-pb",
+    aggregate.PB == null ? "—" : `${formatNumber(aggregate.PB, 2)}×`,
+  );
+  text(
+    "#stock-weighted-roe",
+    aggregate.ROE == null ? "—" : `${formatNumber(aggregate.ROE, 2)}%`,
+  );
+  text(
+    "#stock-weighted-dividend-yield",
+    aggregate.股息率 == null
+      ? "—"
+      : `${formatNumber(aggregate.股息率, 2)}%`,
+  );
+  text(
+    "#stock-fundamentals-note",
+    `${summary.说明 ?? summary.口径 ?? ""}${
+      summary.估值日期 ? ` · 行情日期 ${summary.估值日期}` : ""
+    }`,
+  );
+
+  [
+    ["#stock-weighted-pe", "PE"],
+    ["#stock-weighted-pb", "PB"],
+    ["#stock-weighted-roe", "ROE"],
+    ["#stock-weighted-dividend-yield", "股息率"],
+  ].forEach(([selector, key]) => {
+    const detail = coverage[key] ?? {};
+    document.querySelector(selector).title =
+      `覆盖 ${detail.数量 ?? 0} 只股票，合计占净值 ${formatNumber(
+        detail.占净值比例,
+        2,
+      )}%`;
+  });
+}
+
+function stockMetricText(value, unit) {
+  if (
+    value === null ||
+    value === undefined ||
+    value === "" ||
+    !Number.isFinite(Number(value))
+  ) {
+    return "—";
+  }
+  return `${formatNumber(value, 2)}${unit}`;
+}
+
+function stockRowsForRange(range) {
+  const rows = currentStockDetail?.价格趋势?.明细 ?? [];
+  return filterNavRows(rows, range);
+}
+
+function renderStockPriceChart(range = currentStockRange) {
+  currentStockRange = range;
+  document.querySelectorAll("[data-stock-range]").forEach((button) => {
+    const active = button.dataset.stockRange === range;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+
+  const svg = document.querySelector("#stock-price-chart");
+  const empty = document.querySelector("#stock-chart-empty");
+  const tooltip = document.querySelector("#stock-chart-tooltip");
+  const rows = stockRowsForRange(range)
+    .map((row) => ({ ...row, 收盘: Number(row.收盘) }))
+    .filter((row) => row.日期 && Number.isFinite(row.收盘));
+  svg.replaceChildren();
+  stockPlotPoints = [];
+  tooltip.hidden = true;
+  empty.hidden = rows.length >= 2;
+
+  if (rows.length < 2) {
+    text("#stock-range-change", null);
+    text("#stock-range-high", null);
+    text("#stock-range-low", null);
+    text("#stock-range-dates", null);
+    return;
+  }
+
+  const width = 1000;
+  const height = 340;
+  const margin = { top: 24, right: 24, bottom: 42, left: 72 };
+  const plotWidth = width - margin.left - margin.right;
+  const plotHeight = height - margin.top - margin.bottom;
+  const startTime = new Date(`${rows[0].日期}T00:00:00`).getTime();
+  const endTime = new Date(`${rows.at(-1).日期}T00:00:00`).getTime();
+  const closes = rows.map((row) => row.收盘);
+  const rawMin = Math.min(...closes);
+  const rawMax = Math.max(...closes);
+  const padding = Math.max((rawMax - rawMin) * 0.08, rawMax * 0.015, 0.01);
+  const minValue = Math.max(0, rawMin - padding);
+  const maxValue = rawMax + padding;
+  const xFor = (isoDate) => {
+    const time = new Date(`${isoDate}T00:00:00`).getTime();
+    return margin.left +
+      ((time - startTime) / Math.max(endTime - startTime, 1)) * plotWidth;
+  };
+  const yFor = (value) =>
+    margin.top +
+    ((maxValue - Number(value)) / Math.max(maxValue - minValue, 0.0001)) *
+      plotHeight;
+
+  const defs = svgNode("defs");
+  const gradient = svgNode("linearGradient", {
+    id: "stock-price-gradient",
+    x1: "0",
+    y1: "0",
+    x2: "0",
+    y2: "1",
+  });
+  gradient.append(
+    svgNode("stop", {
+      offset: "0%",
+      "stop-color": "#d33b28",
+      "stop-opacity": "0.23",
+    }),
+    svgNode("stop", {
+      offset: "100%",
+      "stop-color": "#d33b28",
+      "stop-opacity": "0",
+    }),
+  );
+  defs.append(gradient);
+  svg.append(defs);
+
+  const grid = svgNode("g", { class: "stock-price-grid" });
+  buildYAxisTicks(minValue, maxValue).forEach((value) => {
+    const y = yFor(value);
+    grid.append(
+      svgNode("line", {
+        x1: margin.left,
+        y1: y,
+        x2: width - margin.right,
+        y2: y,
+      }),
+    );
+    const label = svgNode("text", {
+      x: margin.left - 12,
+      y: y + 4,
+      "text-anchor": "end",
+    });
+    label.textContent = formatNumber(value, 2);
+    grid.append(label);
+  });
+  for (let index = 0; index < 5; index += 1) {
+    const ratio = index / 4;
+    const time = startTime + ratio * (endTime - startTime);
+    const x = margin.left + ratio * plotWidth;
+    grid.append(
+      svgNode("line", {
+        x1: x,
+        y1: margin.top,
+        x2: x,
+        y2: height - margin.bottom,
+      }),
+    );
+    const label = svgNode("text", {
+      x,
+      y: height - 16,
+      "text-anchor": index === 0 ? "start" : index === 4 ? "end" : "middle",
+    });
+    label.textContent = formatChartDate(
+      localIsoDate(new Date(time)),
+      range !== "1m",
+    );
+    grid.append(label);
+  }
+  svg.append(grid);
+
+  stockPlotPoints = rows.map((row) => ({
+    ...row,
+    value: row.收盘,
+    x: xFor(row.日期),
+    y: yFor(row.收盘),
+  }));
+  const linePath = stockPlotPoints
+    .map(
+      (point, index) =>
+        `${index ? "L" : "M"}${point.x.toFixed(2)},${point.y.toFixed(2)}`,
+    )
+    .join(" ");
+  const baseline = height - margin.bottom;
+  const areaPath = `${linePath} L${stockPlotPoints
+    .at(-1)
+    .x.toFixed(2)},${baseline} L${stockPlotPoints[0].x.toFixed(
+    2,
+  )},${baseline} Z`;
+  svg.append(
+    svgNode("path", { d: areaPath, class: "stock-price-area" }),
+    svgNode("path", { d: linePath, class: "stock-price-line" }),
+  );
+
+  const crosshair = svgNode("g", {
+    id: "stock-price-crosshair",
+    class: "stock-price-crosshair",
+    visibility: "hidden",
+  });
+  crosshair.append(
+    svgNode("line", {
+      x1: 0,
+      y1: margin.top,
+      x2: 0,
+      y2: baseline,
+    }),
+    svgNode("circle", { cx: 0, cy: 0, r: 5 }),
+  );
+  svg.append(crosshair);
+
+  const first = rows[0].收盘;
+  const last = rows.at(-1).收盘;
+  const change = first > 0 ? (last / first - 1) * 100 : null;
+  const changeElement = document.querySelector("#stock-range-change");
+  changeElement.textContent = Number.isFinite(change)
+    ? formatPercent(change)
+    : "—";
+  changeElement.className = Number.isFinite(change)
+    ? movementClass(change)
+    : "";
+  text("#stock-range-high", `${formatNumber(rawMax, 2)} 元`);
+  text("#stock-range-low", `${formatNumber(rawMin, 2)} 元`);
+  text(
+    "#stock-range-dates",
+    `${formatChartDate(rows[0].日期)} — ${formatChartDate(rows.at(-1).日期)}`,
+  );
+  svg.setAttribute(
+    "aria-label",
+    `${formatChartDate(rows[0].日期)}至${formatChartDate(
+      rows.at(-1).日期,
+    )}的前复权收盘价曲线，区间涨跌${formatPercent(change)}`,
+  );
+}
+
+function dailyCacheLabel(cache) {
+  const statusLabels = {
+    HIT: "日缓存命中",
+    MISS: cache?.强制刷新 ? "已强制刷新" : "已更新日缓存",
+    STALE: "上游暂不可用 · 使用旧缓存",
+  };
+  const label = statusLabels[cache?.状态] ?? "日缓存";
+  if (!cache?.下次更新) return `${label} · 收盘后更新`;
+  const refreshAt = new Date(cache.下次更新);
+  if (Number.isNaN(refreshAt.getTime())) return `${label} · 收盘后更新`;
+  return `${label} · 下次检查 ${refreshAt.toLocaleString("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  })}`;
+}
+
+function renderStockDetail(data, range = "1y") {
+  currentStockDetail = data;
+  const basic = data.基础信息 ?? {};
+  const quote = data.行情 ?? {};
+  const metrics = data.指标 ?? {};
+  text("#stock-detail-name", basic.名称, "未知股票");
+  text("#stock-detail-code", basic.代码);
+  text("#stock-detail-industry", basic.行业, "行业暂无");
+  text("#stock-detail-market", basic.市场, "市场暂无");
+  text(
+    "#stock-detail-listed",
+    basic.上市日期 ? `上市于 ${basic.上市日期}` : "上市日期暂无",
+  );
+  text(
+    "#stock-detail-price",
+    quote.最新价 == null ? null : `${formatNumber(quote.最新价, 2)} 元`,
+  );
+  const changeElement = document.querySelector("#stock-detail-change");
+  changeElement.textContent =
+    quote.涨跌幅 == null ? "涨跌幅暂无" : formatPercent(quote.涨跌幅);
+  changeElement.className =
+    quote.涨跌幅 == null ? "" : movementClass(quote.涨跌幅);
+  text(
+    "#stock-detail-price-date",
+    quote.行情日期 ? `行情日期 ${quote.行情日期}` : "行情日期暂无",
+  );
+  text("#stock-detail-pe", stockMetricText(metrics.PE, "×"));
+  text("#stock-detail-pb", stockMetricText(metrics.PB, "×"));
+  text("#stock-detail-roe", stockMetricText(metrics.ROE, "%"));
+  text(
+    "#stock-detail-dividend-yield",
+    stockMetricText(metrics.股息率, "%"),
+  );
+  text(
+    "#stock-detail-turnover",
+    stockMetricText(metrics.换手率, "%"),
+  );
+  text("#stock-detail-metric-note", metrics.说明, "查询时点数据");
+  text("#stock-detail-cache-note", dailyCacheLabel(data._缓存));
+  const refreshButton = document.querySelector("#stock-detail-refresh");
+  refreshButton.disabled = false;
+  refreshButton.querySelector("span").textContent = "强制刷新";
+
+  const warnings = data.提示 ?? [];
+  const warningElement = document.querySelector("#stock-detail-warnings");
+  warningElement.hidden = !warnings.length;
+  warningElement.textContent = warnings.join("；");
+  text(
+    "#stock-detail-query-time",
+    data.查询时间
+      ? `查询于 ${new Date(data.查询时间).toLocaleString("zh-CN", {
+          hour12: false,
+        })}`
+      : null,
+  );
+  currentStockRange = range;
+  renderStockPriceChart(range);
+}
+
+async function openStockDetail(code, fallback = {}, forceRefresh = false) {
+  const normalized = String(code ?? "").trim().padStart(6, "0");
+  if (!validateCode(normalized)) return;
+  const dialog = document.querySelector("#stock-detail-dialog");
+  const loading = document.querySelector("#stock-detail-loading");
+  const error = document.querySelector("#stock-detail-error");
+  const content = document.querySelector("#stock-detail-content");
+  const refreshButton = document.querySelector("#stock-detail-refresh");
+  const requestId = ++stockDetailRequestId;
+  const requestedRange = forceRefresh ? currentStockRange : "1y";
+  currentStockCode = normalized;
+  currentStockFallback = fallback;
+  currentStockDetail = null;
+  stockPlotPoints = [];
+  refreshButton.disabled = true;
+  refreshButton.querySelector("span").textContent = "刷新中…";
+  loading.hidden = false;
+  error.hidden = true;
+  content.hidden = true;
+  if (!dialog.open) dialog.showModal();
+
+  try {
+    const params = new URLSearchParams();
+    if (forceRefresh) params.set("refresh", "true");
+    const queryString = params.toString();
+    const query = queryString ? `?${queryString}` : "";
+    const response = await fetch(`/api/stocks/${normalized}${query}`);
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(
+        payload.detail || `股票查询失败（HTTP ${response.status}）`,
+      );
+    }
+    if (requestId !== stockDetailRequestId) return;
+    payload.基础信息 ??= {};
+    payload.基础信息.名称 ??= fallback.名称;
+    payload.基础信息.行业 ??= fallback.行业;
+    payload._缓存 = {
+      状态: response.headers.get("X-Cache"),
+      新鲜度: response.headers.get("X-Cache-Status"),
+      数据日期: response.headers.get("X-Data-Date"),
+      下次更新: response.headers.get("X-Next-Refresh"),
+      强制刷新: forceRefresh,
+    };
+    renderStockDetail(payload, requestedRange);
+    loading.hidden = true;
+    content.hidden = false;
+    document.querySelector(".stock-detail-sheet").scrollTop = 0;
+  } catch (requestError) {
+    if (requestId !== stockDetailRequestId) return;
+    loading.hidden = true;
+    error.hidden = false;
+    refreshButton.disabled = false;
+    refreshButton.querySelector("span").textContent = "强制刷新";
+    text(
+      "#stock-detail-error-message",
+      requestError.message,
+      "请稍后重试。",
+    );
+  }
+}
+
 function renderHoldingGroup(group, type) {
   const rows = group?.明细 ?? [];
   const tableBody = document.querySelector("#holdings-table");
@@ -2020,20 +2669,31 @@ function renderHoldingGroup(group, type) {
   const quantityHeading = document.querySelector("#quantity-heading");
   const weightHeading = document.querySelector("#holding-weight-heading");
   const isBond = type === "债券";
+  const isFund = type === "基金";
   const isPenetration = type === "穿透";
+  const isStock = !isBond && !isFund;
+  const targetEtfPenetration = usesTargetEtfPenetrationView();
   const penetration = currentHoldings?.ETF穿透 ?? {};
   const target = penetration.目标ETF ?? {};
   const context = document.querySelector("#holdings-context");
+  const holdingsTable = tableBody.closest("table");
+  const stockOnlyHeadings = document.querySelectorAll(
+    ".stock-industry-column, .stock-fundamental-column",
+  );
 
   text("#holdings-period", group?.报告期, "暂无报告期");
   text("#holdings-count", rows.length, "0");
   text(
     "#security-map-title",
     isPenetration
-      ? "目标 ETF 穿透矩阵"
-      : penetration.可用 && type === "股票"
-        ? "直接股票持仓矩阵"
-        : `${type}持仓矩阵`,
+      ? targetEtfPenetration
+        ? "股票持仓矩阵"
+        : "目标 ETF 穿透矩阵"
+      : isFund
+        ? "基金投资矩阵"
+        : penetration.可用 && type === "股票"
+          ? "直接股票持仓矩阵"
+          : `${type}持仓矩阵`,
   );
   text(
     "#top-holdings-share-label",
@@ -2043,15 +2703,21 @@ function renderHoldingGroup(group, type) {
     "#security-map-note",
     isPenetration
       ? "矩形面积为目标 ETF 内部权重，尚未乘以联接基金持有目标 ETF 的比例。"
-      : isBond
-        ? "矩形面积按最新报告披露的各只债券占基金净值比例分配。"
-        : penetration.可用 && type === "股票"
-          ? "矩形面积按各项占联接基金净值比例分配，标签显示实际比例。"
-          : "矩形面积按各项占基金净值比例分配，标签显示实际比例。",
+      : isFund
+        ? "矩形面积按季度报告披露的基金投资占基金净值比例分配。"
+        : isBond
+          ? "矩形面积按最新报告披露的各只债券占基金净值比例分配。"
+          : penetration.可用 && type === "股票"
+            ? "矩形面积按各项占联接基金净值比例分配，标签显示实际比例。"
+            : "矩形面积按各项占基金净值比例分配，标签显示实际比例。",
   );
   if (isPenetration) {
     context.hidden = false;
     context.textContent = `穿透目标：${target.名称 ?? "目标 ETF"} · ${target.代码 ?? "代码未知"}`;
+  } else if (isFund) {
+    context.hidden = false;
+    context.textContent =
+      group?.说明 ?? "以下为季度报告披露的基金或 ETF 投资。";
   } else if (penetration.可用 && type === "股票") {
     context.hidden = false;
     context.textContent = "以下为联接基金直接持有的股票，不包含目标 ETF 内部持仓。";
@@ -2060,8 +2726,13 @@ function renderHoldingGroup(group, type) {
     context.textContent = "";
   }
   tableBody.replaceChildren();
-  quantityHeading.hidden = isBond;
+  quantityHeading.hidden = isBond || isFund;
+  stockOnlyHeadings.forEach((heading) => {
+    heading.hidden = !isStock;
+  });
+  holdingsTable.classList.toggle("stock-fundamentals-visible", isStock);
   weightHeading.textContent = isPenetration ? "ETF内部占比" : "占净值";
+  renderStockFundamentals(group, type);
   renderSectorMatrix(group, type);
 
   if (!rows.length) {
@@ -2086,11 +2757,25 @@ function renderHoldingGroup(group, type) {
     rank.textContent = String(row.持仓排名 ?? "—").padStart(2, "0");
 
     const security = document.createElement("td");
-    const name = document.createElement("span");
-    name.className = "security-name";
+    const name = document.createElement(isStock ? "button" : "span");
+    name.className = isStock
+      ? "stock-detail-trigger"
+      : "security-name";
+    if (isStock) {
+      name.type = "button";
+      name.title = "查看股票基础资料、估值指标和收盘价趋势";
+      name.addEventListener("click", () =>
+        openStockDetail(row.股票代码, {
+          名称: row.股票名称,
+          行业: row.所属行业,
+        }),
+      );
+    }
     name.textContent = isBond
       ? row.债券名称 ?? "未知债券"
-      : row.股票名称 ?? "未知股票";
+      : isFund
+        ? row.基金名称 ?? "未知基金"
+        : row.股票名称 ?? "未知股票";
     const code = document.createElement("span");
     code.className = "security-code";
     code.textContent = isBond
@@ -2101,8 +2786,17 @@ function renderHoldingGroup(group, type) {
         ]
           .filter(Boolean)
           .join(" · ") || "—"
-      : row.股票代码 ?? "—";
+      : isFund
+        ? [row.基金代码, row.基金类型, row.运作方式]
+            .filter(Boolean)
+            .join(" · ") || "—"
+        : row.股票代码 ?? "—";
     security.append(name, code);
+
+    const industry = document.createElement("td");
+    industry.className = "stock-industry-cell";
+    industry.hidden = !isStock;
+    industry.textContent = row.所属行业 ?? "—";
 
     const weight = document.createElement("td");
     weight.className = "weight-cell";
@@ -2117,13 +2811,35 @@ function renderHoldingGroup(group, type) {
     weight.append(weightValue, track);
 
     const shares = document.createElement("td");
-    shares.hidden = isBond;
+    shares.hidden = isBond || isFund;
     shares.textContent = `${formatNumber(row.持股数, 2)} 万股`;
+
+    const stockMetrics = [
+      ["PE", "×"],
+      ["PB", "×"],
+      ["ROE", "%"],
+      ["股息率", "%"],
+    ].map(([key, unit]) => {
+      const cell = document.createElement("td");
+      cell.className = "stock-fundamental-cell";
+      cell.hidden = !isStock;
+      cell.textContent =
+        row[key] == null ? "—" : `${formatNumber(row[key], 2)}${unit}`;
+      return cell;
+    });
 
     const marketValue = document.createElement("td");
     marketValue.textContent = `${formatNumber(row.持仓市值, 2)} 万元`;
 
-    tr.append(rank, security, weight, shares, marketValue);
+    tr.append(
+      rank,
+      security,
+      industry,
+      weight,
+      ...stockMetrics,
+      shares,
+      marketValue,
+    );
     tableBody.append(tr);
   });
 
@@ -2132,22 +2848,41 @@ function renderHoldingGroup(group, type) {
     rows.map((row) => ({
       name: isBond
         ? row.债券名称 ?? "未知债券"
-        : row.股票名称 ?? "未知股票",
-      code: isBond ? row.债券代码 : row.股票代码,
+        : isFund
+          ? row.基金名称 ?? "未知基金"
+          : row.股票名称 ?? "未知股票",
+      code: isBond
+        ? row.债券代码
+        : isFund
+          ? row.基金代码
+          : row.股票代码,
+      industry: isStock ? row.所属行业 : null,
       weight: row.占净值比例,
     })),
     isPenetration ? "目标 ETF 穿透持仓矩阵图" : `${type}持仓矩阵图`,
     isPenetration ? "目标 ETF 净值" : "基金净值",
+    isStock
+      ? (item) =>
+          openStockDetail(item.code, {
+            名称: item.name,
+            行业: item.industry,
+          })
+      : null,
   );
   text("#top-holdings-share", `${formatNumber(total, 1)}%`);
 }
 
 function holdingGroupConfig(type) {
   const penetrationAvailable = Boolean(currentHoldings?.ETF穿透?.可用);
+  const targetEtfPenetration = usesTargetEtfPenetrationView();
   const configs = {
     穿透: {
       key: "ETF穿透",
-      label: "ETF穿透",
+      label: targetEtfPenetration ? "股票持仓" : "ETF穿透",
+    },
+    基金: {
+      key: "基金投资",
+      label: "基金持仓",
     },
     股票: {
       key: "股票持仓",
@@ -2159,6 +2894,185 @@ function holdingGroupConfig(type) {
     },
   };
   return configs[type];
+}
+
+function usesTargetEtfPenetrationView() {
+  const fundGroup = currentHoldings?.基金投资 ?? {};
+  return (
+    fundGroup.类型 === "目标ETF" &&
+    (fundGroup.明细 ?? []).length === 1 &&
+    Boolean(currentHoldings?.ETF穿透?.可用)
+  );
+}
+
+function quarterKeyFromPeriod(period) {
+  const matched = String(period ?? "").match(/(20\d{2})年(?:第)?([1-4])季度/);
+  return matched ? `${matched[1]}Q${matched[2]}` : "";
+}
+
+function quarterLabel(periodKey) {
+  const matched = String(periodKey ?? "").match(/^(20\d{2})Q([1-4])$/);
+  return matched ? `${matched[1]}年第${matched[2]}季度` : periodKey;
+}
+
+function setHoldingsQuarterStatus(message, state = "ready") {
+  const status = document.querySelector("#holdings-quarter-status");
+  status.dataset.state = state;
+  status.querySelector("span").textContent = message;
+}
+
+function renderQuarterReportList(reports, selectedKey) {
+  const list = document.querySelector("#quarter-report-list");
+  list.replaceChildren();
+  text("#quarter-report-count", reports.length, "0");
+
+  if (!reports.length) {
+    const empty = document.createElement("p");
+    empty.className = "quarter-report-empty";
+    empty.textContent = "暂无可用的季度报告目录。";
+    list.append(empty);
+    return;
+  }
+
+  reports.forEach((report, index) => {
+    const link = document.createElement("a");
+    link.className = "quarter-report-link";
+    link.href = report.链接;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.classList.toggle("active", report.key === selectedKey);
+    link.style.setProperty("--report-index", index);
+    link.setAttribute(
+      "aria-label",
+      `打开${report.报告期 ?? report.key}原始季度报告`,
+    );
+
+    const sequence = document.createElement("span");
+    sequence.className = "quarter-report-sequence";
+    sequence.textContent = String(reports.length - index).padStart(2, "0");
+    const copy = document.createElement("span");
+    copy.className = "quarter-report-copy";
+    const period = document.createElement("strong");
+    period.textContent = report.报告期 ?? quarterLabel(report.key);
+    const date = document.createElement("small");
+    date.textContent = report.公告日期
+      ? `公告于 ${report.公告日期}`
+      : "公告日期暂无";
+    copy.append(period, date);
+    const action = document.createElement("span");
+    action.className = "quarter-report-action";
+    action.textContent = report.key === selectedKey ? "当前持仓 ↗" : "查看原文 ↗";
+    link.append(sequence, copy, action);
+    list.append(link);
+  });
+}
+
+function initializeHoldingsExplorer(holdings) {
+  const explorer = document.querySelector("#holdings-explorer");
+  const select = document.querySelector("#holdings-quarter-select");
+  select.disabled = false;
+  document.querySelector("#holdings-content").classList.remove("is-loading");
+  document.querySelector("#holdings-content").removeAttribute("aria-busy");
+  currentQuarterReports = holdings?.季报列表 ?? [];
+  currentHoldingsPeriodKey =
+    holdings?.季度Key ?? quarterKeyFromPeriod(holdings?.报告期);
+
+  select.replaceChildren();
+  currentQuarterReports.forEach((report, index) => {
+    const option = document.createElement("option");
+    option.value = report.key;
+    option.textContent = `${report.报告期 ?? quarterLabel(report.key)}${
+      index === 0 ? " · 最新披露" : ""
+    }`;
+    select.append(option);
+  });
+  if (
+    currentHoldingsPeriodKey &&
+    !currentQuarterReports.some(
+      (report) => report.key === currentHoldingsPeriodKey,
+    )
+  ) {
+    const option = document.createElement("option");
+    option.value = currentHoldingsPeriodKey;
+    option.textContent = quarterLabel(currentHoldingsPeriodKey);
+    select.prepend(option);
+  }
+  if (currentHoldingsPeriodKey) {
+    select.value = currentHoldingsPeriodKey;
+  }
+  explorer.hidden = !select.options.length && !currentQuarterReports.length;
+  renderQuarterReportList(
+    currentQuarterReports,
+    currentHoldingsPeriodKey,
+  );
+  setHoldingsQuarterStatus(
+    currentHoldingsPeriodKey
+      ? `${quarterLabel(currentHoldingsPeriodKey)} · 已展示`
+      : "最新披露",
+  );
+  renderHoldings(holdings, false);
+}
+
+async function queryHoldingsPeriod(periodKey) {
+  if (!currentCode || !periodKey || periodKey === currentHoldingsPeriodKey) {
+    return;
+  }
+  const requestId = ++holdingsRequestId;
+  const previousKey = currentHoldingsPeriodKey;
+  const select = document.querySelector("#holdings-quarter-select");
+  const content = document.querySelector("#holdings-content");
+  select.disabled = true;
+  content.classList.add("is-loading");
+  content.setAttribute("aria-busy", "true");
+  setHoldingsQuarterStatus(
+    `正在查询 ${quarterLabel(periodKey)}…`,
+    "loading",
+  );
+
+  try {
+    const params = new URLSearchParams({
+      period: periodKey,
+      holdings_limit: "20",
+    });
+    const response = await fetch(
+      `/api/funds/${currentCode}/holdings?${params}`,
+    );
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.detail || `查询失败（HTTP ${response.status}）`);
+    }
+    if (requestId !== holdingsRequestId) return;
+
+    currentHoldingsPeriodKey =
+      payload.季度Key ?? periodKey;
+    if ((payload.季报列表 ?? []).length) {
+      currentQuarterReports = payload.季报列表;
+    }
+    renderHoldings(payload, true);
+    select.value = currentHoldingsPeriodKey;
+    renderQuarterReportList(
+      currentQuarterReports,
+      currentHoldingsPeriodKey,
+    );
+    const cacheLabel =
+      response.headers.get("X-Cache") === "HIT" ? "缓存命中" : "查询完成";
+    setHoldingsQuarterStatus(
+      `${quarterLabel(currentHoldingsPeriodKey)} · ${cacheLabel}`,
+    );
+  } catch (error) {
+    if (requestId !== holdingsRequestId) return;
+    select.value = previousKey;
+    setHoldingsQuarterStatus(
+      error.message || "季度持仓查询失败",
+      "error",
+    );
+  } finally {
+    if (requestId === holdingsRequestId) {
+      select.disabled = false;
+      content.classList.remove("is-loading");
+      content.removeAttribute("aria-busy");
+    }
+  }
 }
 
 function selectHoldingType(type) {
@@ -2175,11 +3089,16 @@ function selectHoldingType(type) {
   renderHoldingGroup(currentHoldings?.[config.key], type);
 }
 
-function renderHoldings(holdings) {
+function renderHoldings(holdings, preserveType = false) {
+  const previousType = currentHoldingType;
   currentHoldings = holdings ?? {};
   renderAssetAllocation(currentHoldings.资产分布);
   const tabs = document.querySelector("#holdings-tabs");
-  const groups = ["穿透", "股票", "债券"].filter(
+  const targetEtfPenetration = usesTargetEtfPenetrationView();
+  const groupOrder = targetEtfPenetration
+    ? ["穿透", "股票", "债券"]
+    : ["基金", "穿透", "股票", "债券"];
+  const groups = groupOrder.filter(
     (type) => {
       const config = holdingGroupConfig(type);
       return (currentHoldings?.[config.key]?.明细 ?? []).length;
@@ -2203,13 +3122,9 @@ function renderHoldings(holdings) {
   });
 
   currentHoldingType =
-    groups.includes("穿透")
-      ? "穿透"
-      : groups.includes("股票")
-        ? "股票"
-        : groups.includes("债券")
-          ? "债券"
-          : "股票";
+    preserveType && groups.includes(previousType)
+      ? previousType
+      : groups[0] ?? "股票";
 
   if (!groups.length) {
     renderHoldingGroup(
@@ -2411,6 +3326,9 @@ function renderFund(data) {
   text("#fund-code-badge", basic.代码);
   text("#fund-type", basic.类型);
   text("#fund-date", basic.成立日 ? `成立于 ${basic.成立日}` : "成立日暂无");
+  text("#fund-cache-note", dailyCacheLabel(data._缓存));
+  refreshButton.disabled = false;
+  refreshButton.querySelector("span").textContent = "强制刷新";
   text(
     "#query-time",
     source.查询时间
@@ -2431,10 +3349,10 @@ function renderFund(data) {
   text("#data-source", `净值及业绩：${source.净值及业绩 ?? "AKShare"}`);
 
   renderFundProfile(basic);
-  renderPerformance(performance);
+  renderPerformance(performance, data.同类表现 ?? {});
   renderNavHistory(data.净值曲线);
   initializeTrackBenchmark(data.赛道基准建议);
-  renderHoldings(data.基金持仓);
+  initializeHoldingsExplorer(data.基金持仓);
   renderWarnings(data.提示);
 }
 
@@ -2446,12 +3364,15 @@ async function queryFund(code, refresh = false) {
   }
 
   clearInputError();
+  holdingsRequestId += 1;
   currentCode = code;
   codeInput.value = code;
+  refreshButton.disabled = true;
+  refreshButton.querySelector("span").textContent = "刷新中…";
   setView("loading");
 
   try {
-    const params = new URLSearchParams({ holdings_limit: "20" });
+    const params = new URLSearchParams();
     if (refresh) params.set("refresh", "true");
     const response = await fetch(`/api/funds/${code}?${params}`);
     const payload = await response.json();
@@ -2459,11 +3380,20 @@ async function queryFund(code, refresh = false) {
       throw new Error(payload.detail || `查询失败（HTTP ${response.status}）`);
     }
 
+    payload._缓存 = {
+      状态: response.headers.get("X-Cache"),
+      新鲜度: response.headers.get("X-Cache-Status"),
+      数据日期: response.headers.get("X-Data-Date"),
+      下次更新: response.headers.get("X-Next-Refresh"),
+      强制刷新: refresh,
+    };
     renderFund(payload);
     setView("results");
     history.replaceState(null, "", `/?code=${code}`);
     results.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
+    refreshButton.disabled = false;
+    refreshButton.querySelector("span").textContent = "强制刷新";
     errorMessage.textContent = error.message || "未知错误，请稍后重试。";
     setView("error");
   }
@@ -2486,6 +3416,12 @@ document.querySelectorAll("[data-code]").forEach((button) => {
 refreshButton.addEventListener("click", () => {
   if (currentCode) queryFund(currentCode, true);
 });
+
+document
+  .querySelector("#holdings-quarter-select")
+  .addEventListener("change", (event) => {
+    queryHoldingsPeriod(event.target.value);
+  });
 
 document.querySelectorAll("[data-nav-range]").forEach((button) => {
   button.addEventListener("click", () => {
@@ -2605,6 +3541,119 @@ navChart.addEventListener("pointerleave", () => {
   navTooltip.hidden = true;
   document
     .querySelector("#nav-crosshair")
+    ?.setAttribute("visibility", "hidden");
+});
+
+document.querySelectorAll("[data-stock-range]").forEach((button) => {
+  button.addEventListener("click", () =>
+    renderStockPriceChart(button.dataset.stockRange),
+  );
+});
+
+const metricHelpDialog = document.querySelector("#metric-help-dialog");
+const metricHelpSheet = document.querySelector(".metric-help-sheet");
+
+function openMetricHelp(metric) {
+  const target = document.querySelector(
+    `[data-metric-help-card="${metric}"]`,
+  );
+  if (!target) return;
+  const alreadyOpen = metricHelpDialog.open;
+  document.querySelectorAll("[data-metric-help-card]").forEach((card) => {
+    card.classList.toggle("active", card === target);
+  });
+  metricHelpDialog
+    .querySelectorAll(".metric-help-nav [data-metric-help]")
+    .forEach((button) => {
+      const active = button.dataset.metricHelp === metric;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-current", active ? "true" : "false");
+    });
+  if (!alreadyOpen) metricHelpDialog.showModal();
+  requestAnimationFrame(() => {
+    metricHelpSheet.scrollTo({
+      top: Math.max(target.offsetTop - 16, 0),
+      behavior: alreadyOpen ? "smooth" : "auto",
+    });
+  });
+}
+
+document.querySelectorAll("[data-metric-help]").forEach((button) => {
+  button.addEventListener("click", () =>
+    openMetricHelp(button.dataset.metricHelp),
+  );
+});
+
+document
+  .querySelector("#metric-help-close")
+  .addEventListener("click", () => metricHelpDialog.close());
+
+metricHelpDialog.addEventListener("click", (event) => {
+  if (event.target === metricHelpDialog) metricHelpDialog.close();
+});
+
+const stockDialog = document.querySelector("#stock-detail-dialog");
+const stockChart = document.querySelector("#stock-price-chart");
+const stockTooltip = document.querySelector("#stock-chart-tooltip");
+
+function closeStockDetail() {
+  stockDetailRequestId += 1;
+  if (stockDialog.open) stockDialog.close();
+}
+
+document
+  .querySelector("#stock-detail-close")
+  .addEventListener("click", closeStockDetail);
+
+document
+  .querySelector("#stock-detail-refresh")
+  .addEventListener("click", () => {
+    if (currentStockCode) {
+      openStockDetail(
+        currentStockCode,
+        currentStockFallback,
+        true,
+      );
+    }
+  });
+
+stockDialog.addEventListener("click", (event) => {
+  if (event.target === stockDialog) closeStockDetail();
+});
+
+stockDialog.addEventListener("cancel", () => {
+  stockDetailRequestId += 1;
+});
+
+stockChart.addEventListener("pointermove", (event) => {
+  if (!stockPlotPoints.length) return;
+  const bounds = stockChart.getBoundingClientRect();
+  const chartX = ((event.clientX - bounds.left) / bounds.width) * 1000;
+  const nearest = stockPlotPoints.reduce((best, point) =>
+    Math.abs(point.x - chartX) < Math.abs(best.x - chartX) ? point : best,
+  );
+  const crosshair = document.querySelector("#stock-price-crosshair");
+  const [line, circle] = crosshair.children;
+  line.setAttribute("x1", nearest.x);
+  line.setAttribute("x2", nearest.x);
+  circle.setAttribute("cx", nearest.x);
+  circle.setAttribute("cy", nearest.y);
+  crosshair.setAttribute("visibility", "visible");
+  stockTooltip.querySelector("span").textContent = formatChartDate(
+    nearest.日期,
+  );
+  stockTooltip.querySelector("strong").textContent =
+    `收盘 ${formatNumber(nearest.value, 2)} 元`;
+  stockTooltip.style.left = `${(nearest.x / 1000) * bounds.width}px`;
+  stockTooltip.style.top = `${(nearest.y / 340) * bounds.height}px`;
+  stockTooltip.classList.toggle("align-right", nearest.x > 820);
+  stockTooltip.hidden = false;
+});
+
+stockChart.addEventListener("pointerleave", () => {
+  stockTooltip.hidden = true;
+  document
+    .querySelector("#stock-price-crosshair")
     ?.setAttribute("visibility", "hidden");
 });
 

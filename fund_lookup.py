@@ -554,6 +554,418 @@ def _latest_holdings(
     return records, period
 
 
+def _holdings_for_period(
+    frame: pd.DataFrame,
+    year: int,
+    quarter: int,
+    limit: int | None = None,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """从接口返回的一整年持仓中提取指定季度。"""
+    if frame.empty or "季度" not in frame.columns:
+        return [], None
+
+    periods = frame["季度"].astype("string")
+    parsed = periods.str.extract(
+        r"(?P<year>\d{4})年(?P<quarter>[1-4])季度"
+    )
+    matches = (
+        pd.to_numeric(parsed["year"], errors="coerce").eq(year)
+        & pd.to_numeric(parsed["quarter"], errors="coerce").eq(quarter)
+    )
+    selected = frame.loc[matches].copy()
+    if selected.empty:
+        return [], None
+
+    period = str(periods.loc[selected.index[0]])
+    if "占净值比例" in selected.columns:
+        selected = selected.sort_values("占净值比例", ascending=False)
+    elif "序号" in selected.columns:
+        selected = selected.sort_values("序号")
+    if limit is not None:
+        selected = selected.head(limit)
+
+    selected = selected.reset_index(drop=True)
+    if "序号" in selected.columns:
+        selected = selected.drop(columns=["序号"])
+    selected.insert(0, "持仓排名", range(1, len(selected) + 1))
+    return (
+        [
+            {str(key): _clean(value) for key, value in row.items()}
+            for row in selected.to_dict(orient="records")
+        ],
+        period,
+    )
+
+
+def _finite_float(value: Any) -> float | None:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if math.isfinite(numeric) else None
+
+
+def _stock_market_prefix(code: str) -> str:
+    if code.startswith(("4", "8", "92")):
+        return "BJ"
+    if code.startswith(("5", "6", "9")):
+        return "SH"
+    return "SZ"
+
+
+def _load_stock_quotes(codes: list[str]) -> dict[str, dict[str, Any]]:
+    """通过新浪批量行情一次取得持仓股票的最新价与行情日期。"""
+    symbols = [
+        f"{_stock_market_prefix(code).lower()}{code}"
+        for code in dict.fromkeys(codes)
+        if re.fullmatch(r"\d{6}", code)
+    ]
+    if not symbols:
+        return {}
+
+    response = requests.get(
+        f"https://hq.sinajs.cn/list={','.join(symbols)}",
+        headers={
+            "Referer": "https://finance.sina.com.cn",
+            "User-Agent": "Mozilla/5.0",
+        },
+        timeout=10,
+    )
+    response.raise_for_status()
+    text_data = response.content.decode("gbk", errors="ignore")
+    quotes: dict[str, dict[str, Any]] = {}
+    for symbol, payload in re.findall(
+        r'var hq_str_([a-z]{2}\d{6})="([^"]*)";',
+        text_data,
+        flags=re.IGNORECASE,
+    ):
+        values = payload.split(",")
+        if len(values) < 32:
+            continue
+        code = symbol[-6:]
+        current = _finite_float(values[3])
+        previous = _finite_float(values[2])
+        price = current if current and current > 0 else previous
+        quotes[code] = {
+            "名称": values[0].strip() or None,
+            "最新价": price,
+            "行情日期": values[30] or None,
+        }
+    return quotes
+
+
+def _load_stock_fundamentals(
+    code: str,
+    quote: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """查询单股估值与分红，并计算 ROE、近十二个月股息率。
+
+    东方财富的估值比较接口会同时返回目标个股、行业平均、行业中值和
+    若干同行股票，因此这里只接受证券代码与目标代码完全一致的记录。
+    """
+    result: dict[str, Any] = {
+        "所属行业": None,
+        "PE": None,
+        "PB": None,
+        "ROE": None,
+        "股息率": None,
+        "最新价": _finite_float((quote or {}).get("最新价")),
+        "行情日期": (quote or {}).get("行情日期"),
+    }
+
+    industry_error = None
+    try:
+        profile = ak.stock_profile_cninfo(symbol=code)
+        if profile is not None and not profile.empty and "所属行业" in profile:
+            selected = profile
+            if "A股代码" in selected.columns:
+                matched = selected.loc[
+                    selected["A股代码"].astype(str).str.strip().str.zfill(6)
+                    == code
+                ]
+                if not matched.empty:
+                    selected = matched
+            industry = _clean(selected.iloc[0].get("所属行业"))
+            if industry is not None and str(industry).strip():
+                result["所属行业"] = str(industry).strip()
+    except Exception as exc:
+        industry_error = str(exc)
+    if result["所属行业"] is None:
+        try:
+            stock_info = ak.stock_individual_info_em(symbol=code, timeout=10)
+            industry = _item_value_map(stock_info).get("行业")
+            if industry is not None and str(industry).strip():
+                result["所属行业"] = str(industry).strip()
+                industry_error = None
+        except Exception as exc:
+            industry_error = (
+                f"巨潮资讯：{industry_error}；东方财富：{exc}"
+                if industry_error
+                else str(exc)
+            )
+
+    valuation_error = None
+    try:
+        valuation = ak.stock_zh_valuation_comparison_em(
+            symbol=f"{_stock_market_prefix(code)}{code}"
+        )
+        if valuation is not None and not valuation.empty:
+            if "代码" not in valuation.columns:
+                raise ValueError("估值比较结果缺少证券代码列")
+            matched = valuation.loc[
+                valuation["代码"].astype(str).str.strip().str.zfill(6) == code
+            ]
+            if matched.empty:
+                raise ValueError(f"估值比较结果中未找到目标个股 {code}")
+            row = matched.iloc[0]
+            result["PE"] = _finite_float(row.get("市盈率-TTM"))
+            result["PB"] = _finite_float(
+                _pick(row.get("市净率-MRQ"), row.get("市净率-24A"))
+            )
+            pe = result["PE"]
+            pb = result["PB"]
+            if pe not in (None, 0) and pb is not None:
+                result["ROE"] = pb / pe * 100
+    except Exception as exc:
+        try:
+            market = _stock_market_prefix(code)
+            response = requests.get(
+                "https://datacenter.eastmoney.com/securities/api/data/v1/get",
+                params={
+                    "reportName": "RPT_PCF10_INDUSTRY_CVALUE",
+                    "columns": "ALL",
+                    "quoteColumns": "",
+                    "filter": f'(SECUCODE="{code}.{market}")',
+                    "pageNumber": "",
+                    "pageSize": "",
+                    "sortTypes": "1",
+                    "sortColumns": "PAIMING",
+                    "source": "HSF10",
+                    "client": "PC",
+                },
+                timeout=10,
+            )
+            response.raise_for_status()
+            records = response.json().get("result", {}).get("data", [])
+            row = next(
+                (
+                    item
+                    for item in records
+                    if str(item.get("CORRE_SECURITY_CODE") or "") == code
+                ),
+                None,
+            )
+            if row:
+                result["PE"] = _finite_float(row.get("PE_TTM"))
+                result["PB"] = _finite_float(
+                    _pick(row.get("PB_MRQ"), row.get("PB"))
+                )
+                pe = result["PE"]
+                pb = result["PB"]
+                if pe not in (None, 0) and pb is not None:
+                    result["ROE"] = pb / pe * 100
+            else:
+                valuation_error = str(exc)
+        except Exception as fallback_exc:
+            valuation_error = f"{exc}；备用接口：{fallback_exc}"
+
+    dividend_error = None
+    try:
+        dividends = ak.stock_history_dividend_detail(
+            symbol=code,
+            indicator="分红",
+        )
+        price = result["最新价"]
+        if price and price > 0 and dividends is not None:
+            if dividends.empty:
+                result["股息率"] = 0.0
+            elif "派息" in dividends.columns:
+                date_column = (
+                    "除权除息日"
+                    if "除权除息日" in dividends.columns
+                    else "公告日期"
+                )
+                dates = pd.to_datetime(
+                    dividends.get(date_column),
+                    errors="coerce",
+                )
+                quote_date = pd.to_datetime(
+                    result["行情日期"],
+                    errors="coerce",
+                )
+                if pd.isna(quote_date):
+                    quote_date = pd.Timestamp.now().normalize()
+                start_date = quote_date - pd.Timedelta(days=365)
+                cash = pd.to_numeric(
+                    dividends["派息"],
+                    errors="coerce",
+                )
+                # 新浪“派息”为每 10 股现金分红。
+                ttm_cash_per_share = (
+                    cash.loc[
+                        dates.notna()
+                        & dates.le(quote_date)
+                        & dates.gt(start_date)
+                    ].dropna().sum()
+                    / 10
+                )
+                result["股息率"] = ttm_cash_per_share / price * 100
+    except Exception as exc:
+        dividend_error = str(exc)
+
+    result["估值可用"] = any(
+        result[key] is not None
+        for key in ("PE", "PB", "ROE", "股息率")
+    )
+    result["_行业错误"] = industry_error
+    result["_估值错误"] = valuation_error
+    result["_分红错误"] = dividend_error
+    return result
+
+
+def _weighted_stock_metric(
+    rows: list[dict[str, Any]],
+    metric: str,
+) -> tuple[float | None, int, float]:
+    weighted_sum = 0.0
+    weighted_inverse_sum = 0.0
+    total_weight = 0.0
+    count = 0
+    for row in rows:
+        value = _finite_float(row.get(metric))
+        weight = _finite_float(row.get("占净值比例"))
+        if value is None or weight is None or weight <= 0:
+            continue
+        if metric in ("PE", "PB") and value <= 0:
+            continue
+        weighted_sum += value * weight
+        if metric in ("PE", "PB"):
+            weighted_inverse_sum += weight / value
+        total_weight += weight
+        count += 1
+    if total_weight <= 0:
+        return None, 0, 0.0
+    value = (
+        total_weight / weighted_inverse_sum
+        if metric in ("PE", "PB") and weighted_inverse_sum > 0
+        else weighted_sum / total_weight
+    )
+    return value, count, total_weight
+
+
+def _enrich_stock_holdings(
+    holdings: list[dict[str, Any]],
+    warnings: list[str],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """补充股票指标，并按披露持仓权重汇总组合估值。"""
+    if not holdings:
+        return holdings, {}
+
+    enriched = [dict(row) for row in holdings]
+    codes = [
+        str(row.get("股票代码") or "").strip().zfill(6)
+        for row in enriched
+    ]
+    try:
+        quotes = _load_stock_quotes(codes)
+    except Exception as exc:
+        quotes = {}
+        warnings.append(f"持仓股票最新价格获取失败：{exc}")
+
+    metrics_by_code: dict[str, dict[str, Any]] = {}
+    valid_codes = sorted(
+        {
+            code
+            for code in codes
+            if re.fullmatch(r"\d{6}", code)
+        }
+    )
+    with ThreadPoolExecutor(max_workers=min(6, len(valid_codes) or 1)) as executor:
+        futures = {
+            executor.submit(
+                _load_stock_fundamentals,
+                code,
+                quotes.get(code),
+            ): code
+            for code in valid_codes
+        }
+        for future in as_completed(futures):
+            code = futures[future]
+            try:
+                metrics_by_code[code] = future.result()
+            except Exception as exc:
+                metrics_by_code[code] = {
+                    "估值可用": False,
+                    "_行业错误": str(exc),
+                    "_估值错误": str(exc),
+                    "_分红错误": None,
+                }
+
+    industry_failures = 0
+    valuation_failures = 0
+    dividend_failures = 0
+    quote_dates: list[str] = []
+    for row, code in zip(enriched, codes):
+        metrics = metrics_by_code.get(code, {})
+        for key in ("PE", "PB", "ROE", "股息率", "最新价"):
+            numeric = _finite_float(metrics.get(key))
+            row[key] = round(numeric, 4) if numeric is not None else None
+        row["所属行业"] = metrics.get("所属行业")
+        row["行情日期"] = metrics.get("行情日期")
+        if metrics.get("_行业错误"):
+            industry_failures += 1
+        if metrics.get("_估值错误"):
+            valuation_failures += 1
+        if metrics.get("_分红错误"):
+            dividend_failures += 1
+        if metrics.get("行情日期"):
+            quote_dates.append(str(metrics["行情日期"]))
+
+    if industry_failures:
+        warnings.append(
+            f"{industry_failures} 只持仓股票的所属行业暂不可用。"
+        )
+    if valuation_failures:
+        warnings.append(
+            f"{valuation_failures} 只持仓股票的 PE/PB 数据暂不可用。"
+        )
+    if dividend_failures:
+        warnings.append(
+            f"{dividend_failures} 只持仓股票的分红数据暂不可用。"
+        )
+
+    aggregate: dict[str, Any] = {}
+    coverage: dict[str, Any] = {}
+    for metric in ("PE", "PB", "ROE", "股息率"):
+        value, count, weight = _weighted_stock_metric(enriched, metric)
+        aggregate[metric] = round(value, 4) if value is not None else None
+        coverage[metric] = {
+            "数量": count,
+            "占净值比例": round(weight, 4),
+        }
+
+    available_count = sum(
+        any(row.get(key) is not None for key in ("PE", "PB", "ROE", "股息率"))
+        for row in enriched
+    )
+    summary = {
+        "可用": available_count > 0,
+        "持仓数量": len(enriched),
+        "覆盖数量": available_count,
+        "估值日期": max(quote_dates) if quote_dates else None,
+        "组合指标": aggregate,
+        "指标覆盖": coverage,
+        "口径": "按已披露股票占净值比例，对可用指标分别加权",
+        "说明": (
+            "PE 为 TTM、PB 为 MRQ，组合值按持仓权重调和汇总；"
+            "ROE 按 PB÷PE 推算 TTM 口径；股息率按近 12 个月已除息"
+            "现金分红÷最新价计算，组合 ROE 与股息率按持仓权重算术加权。"
+            "指标为查询时点数据，不是基金报告期时点数据。"
+        ),
+    }
+    return enriched, summary
+
+
 def _load_bond_holdings(code: str, warnings: list[str]) -> pd.DataFrame:
     """按年度回溯，获取基金最新可用的债券持仓披露。"""
     errors: list[str] = []
@@ -609,6 +1021,47 @@ def _latest_industry_allocation(
         for row in selected.to_dict(orient="records")
     ]
     return records, period
+
+
+def _industry_allocation_for_period(
+    frame: pd.DataFrame,
+    year: int,
+    quarter: int,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """提取指定季度末的股票行业配置。"""
+    required = {"行业类别", "占净值比例", "截止时间"}
+    if frame.empty or not required.issubset(frame.columns):
+        return [], None
+
+    selected = frame.copy()
+    dates = pd.to_datetime(selected["截止时间"], errors="coerce")
+    period_number = dates.dt.year * 10 + ((dates.dt.month - 1) // 3 + 1)
+    selected = selected.loc[period_number.eq(year * 10 + quarter)].copy()
+    dates = dates.loc[selected.index]
+    if selected.empty or not dates.notna().any():
+        return [], None
+
+    latest_date = dates.max()
+    selected = selected.loc[dates == latest_date]
+    selected["占净值比例"] = pd.to_numeric(
+        selected["占净值比例"], errors="coerce"
+    )
+    selected = (
+        selected.dropna(subset=["行业类别", "占净值比例"])
+        .loc[lambda value: value["占净值比例"] > 0]
+        .sort_values("占净值比例", ascending=False)
+        .reset_index(drop=True)
+    )
+    if "序号" in selected.columns:
+        selected = selected.drop(columns=["序号"])
+    selected.insert(0, "配置排名", range(1, len(selected) + 1))
+    return (
+        [
+            {str(key): _clean(value) for key, value in row.items()}
+            for row in selected.to_dict(orient="records")
+        ],
+        latest_date.date().isoformat(),
+    )
 
 
 def _load_industry_allocation(
@@ -667,7 +1120,7 @@ def _parse_asset_allocation_report(report_text: str) -> list[dict[str, Any]]:
     """从季报“基金资产组合情况”提取按总资产计算的四类资产占比。"""
     section_match = re.search(
         r"5[\.．]\s*1\s*报告期末基金资产组合情况"
-        r"(.*?)(?=\n\s*5[\.．]\s*2(?:\s|报))",
+        r"(.*?)(?=\n\s*5[\.．]\s*2(?:\s|报|期))",
         report_text,
         flags=re.DOTALL,
     )
@@ -698,10 +1151,13 @@ def _parse_asset_allocation_report(report_text: str) -> list[dict[str, Any]]:
             for number in numbers
             if float(number.replace(",", "")) <= 100
         ]
-        allocation[category] = round(candidates[-1], 2) if candidates else 0.0
+        if candidates:
+            allocation[category] = round(candidates[-1], 2)
+        elif category not in found:
+            allocation[category] = 0.0
         found.add(category)
 
-    if found != {"股票", "债券", "基金"}:
+    if not found:
         return []
     primary_total = sum(allocation.values())
     if primary_total > 100.1:
@@ -711,6 +1167,151 @@ def _parse_asset_allocation_report(report_text: str) -> list[dict[str, Any]]:
         {"资产类别": category, "占比": allocation[category]}
         for category in ("股票", "债券", "基金", "其他")
     ]
+
+
+def _parse_target_fund_holdings(
+    report_text: str,
+) -> list[dict[str, Any]]:
+    """从 ETF 联接基金季报提取其期末目标基金持仓。"""
+    target_match = re.search(
+        r"2[\.．]\s*1[\.．]\s*1\s*目标基金基本情况"
+        r"(.*?)(?=2[\.．]\s*1[\.．]\s*2\s*目标基金产品说明)",
+        report_text,
+        flags=re.DOTALL,
+    )
+    holding_match = re.search(
+        r"5[\.．]\s*\d+\s*期末投资目标基金明细"
+        r"(.*?)(?=\n\s*5[\.．]\s*\d+(?:[\.．]\d+)?(?:\s|报|期))",
+        report_text,
+        flags=re.DOTALL,
+    )
+    if not target_match or not holding_match:
+        return []
+
+    target_section = target_match.group(1)
+    holding_section = holding_match.group(1)
+    name_match = re.search(r"基金名称\s+([^\n]+)", target_section)
+    code_match = re.search(r"基金主代码\s+(\d{6})", target_section)
+    operation_match = re.search(r"基金运作方式\s+([^\n]+)", target_section)
+    if not name_match:
+        return []
+
+    market_values = re.findall(
+        r"\d{1,3}(?:,\d{3})+\.\d{2}",
+        holding_section,
+    )
+    percentages = [
+        float(value)
+        for value in re.findall(r"(?<![\d,])\d+\.\d+(?![\d,])", holding_section)
+        if 0 <= float(value) <= 100
+    ]
+    if not market_values or not percentages:
+        return []
+
+    market_value_yuan = float(market_values[-1].replace(",", ""))
+    return [
+        {
+            "持仓排名": 1,
+            "持仓类型": "目标ETF",
+            "基金代码": code_match.group(1) if code_match else None,
+            "基金名称": name_match.group(1).strip(),
+            "运作方式": (
+                operation_match.group(1).strip() if operation_match else None
+            ),
+            "占净值比例": round(percentages[-1], 2),
+            "持仓市值": round(market_value_yuan / 10_000, 2),
+        }
+    ]
+
+
+def _parse_fof_fund_holdings(report_text: str) -> list[dict[str, Any]]:
+    """从 FOF 季报的“基金中基金”章节提取前十大基金投资。"""
+    section_match = re.search(
+        r"6[\.．]\s*1\s*报告期末按公允价值占基金资产净值比例"
+        r"大小排序的前十名基金投资明细"
+        r"(.*?)(?=\n\s*6[\.．]\s*2(?:\s|当))",
+        report_text,
+        flags=re.DOTALL,
+    )
+    if not section_match:
+        return []
+
+    section = section_match.group(1)
+    row_matches = list(
+        re.finditer(r"(?m)^\s*(\d{1,2})\s+(\d{6})\b", section)
+    )
+    holdings: list[dict[str, Any]] = []
+    for index, matched in enumerate(row_matches):
+        end = (
+            row_matches[index + 1].start()
+            if index + 1 < len(row_matches)
+            else len(section)
+        )
+        row_text = section[matched.start() : end]
+        weight_match = re.search(
+            r"(\d+(?:\.\d+)?)\s+(?:是|否)(?:\s|$)",
+            row_text,
+        )
+        if not weight_match:
+            continue
+        holdings.append(
+            {
+                "持仓排名": int(matched.group(1)),
+                "持仓类型": "FOF",
+                "基金代码": matched.group(2),
+                "基金名称": None,
+                "基金类型": None,
+                "运作方式": None,
+                "占净值比例": round(float(weight_match.group(1)), 2),
+                "持仓市值": None,
+            }
+        )
+    return holdings
+
+
+@lru_cache(maxsize=1)
+def _fund_name_catalog() -> dict[str, dict[str, Any]]:
+    """批量加载基金代码、名称及类型，用于补全 FOF 的 PDF 持仓表。"""
+    frame = ak.fund_name_em()
+    if frame is None or frame.empty or "基金代码" not in frame.columns:
+        return {}
+    catalog: dict[str, dict[str, Any]] = {}
+    for _, row in frame.iterrows():
+        code = str(row.get("基金代码") or "").strip().zfill(6)
+        if not re.fullmatch(r"\d{6}", code):
+            continue
+        catalog[code] = {
+            "基金名称": _clean(row.get("基金简称")),
+            "基金类型": _clean(row.get("基金类型")),
+        }
+    return catalog
+
+
+def _fund_investment_group(
+    holdings: list[dict[str, Any]],
+    report_period: str | None,
+) -> dict[str, Any]:
+    holding_type = (
+        str(holdings[0].get("持仓类型") or "") if holdings else None
+    )
+    is_target_etf = holding_type == "目标ETF"
+    return {
+        "报告期": report_period,
+        "数量": len(holdings),
+        "类型": holding_type,
+        "明细": holdings,
+        "口径": (
+            "季度报告披露的期末目标基金投资"
+            if is_target_etf
+            else "FOF 季度报告披露的前十大基金投资"
+        ),
+        "说明": (
+            "该基金实际持有一只目标 ETF；资产分布保留基金投资，"
+            "股票矩阵优先展示目标 ETF 穿透持仓。"
+            if is_target_etf
+            else "展示 FOF 实际持有的多只基金，不穿透为底层股票。"
+        ),
+    }
 
 
 def _parse_bond_type_structure(report_text: str) -> list[dict[str, Any]]:
@@ -839,6 +1440,70 @@ def _report_period(title: str) -> str | None:
     return f"{matched.group('year')}年第{quarter}季度"
 
 
+def _quarter_key(value: str) -> tuple[int, int]:
+    matched = re.fullmatch(r"(?P<year>20\d{2})Q(?P<quarter>[1-4])", value)
+    if not matched:
+        raise ValueError("报告期必须使用 YYYYQ1 至 YYYYQ4 格式。")
+    return int(matched.group("year")), int(matched.group("quarter"))
+
+
+def _quarter_key_from_period(value: str | None) -> str | None:
+    if not value:
+        return None
+    matched = re.search(
+        r"(?P<year>20\d{2})年(?:第)?(?P<quarter>[1-4])季度",
+        value,
+    )
+    if not matched:
+        return None
+    return f"{matched.group('year')}Q{matched.group('quarter')}"
+
+
+def _quarter_report_catalog(
+    reports: pd.DataFrame,
+) -> list[dict[str, Any]]:
+    """整理季度报告目录，并生成可直接访问的原始 PDF 链接。"""
+    required = {"公告标题", "公告日期", "报告ID"}
+    if reports.empty or not required.issubset(reports.columns):
+        return []
+
+    entries: list[dict[str, Any]] = []
+    pattern = re.compile(
+        r"(?P<year>20\d{2})年第?(?P<quarter>[一二三四1-4])季度报告\s*$"
+    )
+    quarter_map = {"一": "1", "二": "2", "三": "3", "四": "4"}
+    for _, row in reports.iterrows():
+        title = str(row.get("公告标题") or "").strip()
+        matched = pattern.search(title)
+        report_id = str(row.get("报告ID") or "").strip()
+        if not matched or not re.fullmatch(r"AN\d+", report_id):
+            continue
+        year = int(matched.group("year"))
+        quarter = int(
+            quarter_map.get(
+                matched.group("quarter"),
+                matched.group("quarter"),
+            )
+        )
+        entries.append(
+            {
+                "key": f"{year}Q{quarter}",
+                "年度": year,
+                "季度": quarter,
+                "报告期": f"{year}年第{quarter}季度",
+                "公告标题": title,
+                "公告日期": _clean(row.get("公告日期")),
+                "报告ID": report_id,
+                "链接": f"https://pdf.dfcfw.com/pdf/H2_{report_id}_1.pdf",
+            }
+        )
+    entries.sort(
+        key=lambda item: (item["年度"], item["季度"]),
+        reverse=True,
+    )
+    return entries
+
+
 def _quarter_end_from_period(period: str | None) -> date | None:
     if not period:
         return None
@@ -963,9 +1628,16 @@ def _enrich_bond_holdings(
 
 
 def _load_portfolio_report(
-    code: str, warnings: list[str]
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """下载最新季报，返回资产分布与完整债券品种结构。"""
+    code: str,
+    warnings: list[str],
+    period_key: str | None = None,
+) -> tuple[
+    dict[str, Any],
+    dict[str, Any],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+]:
+    """下载最新或指定季报，返回组合结构、报告目录及基金投资明细。"""
     reports = _safe_call(
         "基金季度报告",
         ak.fund_announcement_report_em,
@@ -974,13 +1646,28 @@ def _load_portfolio_report(
     )
     required = {"公告标题", "报告ID"}
     if reports.empty or not required.issubset(reports.columns):
-        return {}, {}
+        return {}, {}, [], []
 
-    selected = reports.loc[
-        reports["公告标题"].astype(str).str.contains(r"季度报告\s*$")
-    ].copy()
+    report_catalog = _quarter_report_catalog(reports)
+    if period_key is not None:
+        selected_report = next(
+            (
+                item
+                for item in report_catalog
+                if item["key"] == period_key
+            ),
+            None,
+        )
+        selected = reports.loc[
+            reports["报告ID"].astype(str)
+            == str((selected_report or {}).get("报告ID") or "")
+        ].copy()
+    else:
+        selected = reports.loc[
+            reports["公告标题"].astype(str).str.contains(r"季度报告\s*$")
+        ].copy()
     if selected.empty:
-        return {}, {}
+        return {}, {}, report_catalog, []
     if "公告日期" in selected.columns:
         selected["_公告日期"] = pd.to_datetime(
             selected["公告日期"], errors="coerce"
@@ -990,7 +1677,7 @@ def _load_portfolio_report(
     report_id = str(latest["报告ID"]).strip()
     if not re.fullmatch(r"AN\d+", report_id):
         warnings.append("基金组合结构获取失败：季报 ID 格式异常。")
-        return {}, {}
+        return {}, {}, report_catalog, []
 
     try:
         response = requests.get(
@@ -1005,16 +1692,29 @@ def _load_portfolio_report(
         )
     except Exception as exc:
         warnings.append(f"基金组合结构获取失败：{exc}")
-        return {}, {}
+        return {}, {}, report_catalog, []
 
     asset_details = _parse_asset_allocation_report(report_text)
     bond_details = _parse_bond_type_structure(report_text)
+    fund_holdings = _parse_target_fund_holdings(report_text)
+    if not fund_holdings:
+        fund_holdings = _parse_fof_fund_holdings(report_text)
+        if fund_holdings:
+            try:
+                catalog = _fund_name_catalog()
+                for row in fund_holdings:
+                    details = catalog.get(str(row.get("基金代码") or ""), {})
+                    row["基金名称"] = details.get("基金名称")
+                    row["基金类型"] = details.get("基金类型")
+            except Exception as exc:
+                warnings.append(f"FOF 持仓基金名称补全失败：{exc}")
     if not asset_details:
         warnings.append("基金资产分布获取失败：未能解析最新季度报告。")
 
     title = str(latest["公告标题"]).strip()
     announcement_date = _clean(latest.get("公告日期"))
     report_period = _report_period(title)
+    report_scope = "指定季度报告" if period_key else "最新季度报告"
     asset_allocation = (
         {
             "可用": True,
@@ -1024,7 +1724,7 @@ def _load_portfolio_report(
             "明细": asset_details,
             "来源报告": title,
             "说明": (
-                "来自最新季度报告的基金资产组合；其他包含现金、"
+                f"来自{report_scope}的基金资产组合；其他包含现金、"
                 "买入返售、衍生品及其他各项资产。"
             ),
         }
@@ -1048,14 +1748,14 @@ def _load_portfolio_report(
             },
             "来源报告": title,
             "说明": (
-                "来自最新季度报告的完整债券品种结构；债券杠杆会使"
+                f"来自{report_scope}的完整债券品种结构；债券杠杆会使"
                 "合计占基金净值超过 100%。"
             ),
         }
         if bond_details
         else {}
     )
-    return asset_allocation, bond_structure
+    return asset_allocation, bond_structure, report_catalog, fund_holdings
 
 
 def _curve_history(
@@ -1179,22 +1879,179 @@ def _dividend_history(frame: pd.DataFrame) -> list[dict[str, Any]]:
     return sorted(records, key=lambda record: record["除息日"])
 
 
+def _return_series_frame(
+    series: dict[str, Any] | None,
+    value_column: str,
+) -> pd.DataFrame:
+    points = (series or {}).get("data") or []
+    if not points:
+        return pd.DataFrame(columns=["日期", value_column])
+    frame = pd.DataFrame(points, columns=["日期", value_column])
+    frame["日期"] = pd.to_datetime(
+        frame["日期"], unit="ms", utc=True, errors="coerce"
+    ).dt.tz_convert("Asia/Shanghai").dt.date
+    frame[value_column] = pd.to_numeric(frame[value_column], errors="coerce")
+    return frame.dropna(subset=["日期", value_column])
+
+
+def _load_return_comparison_em(
+    symbol: str,
+    period: str,
+) -> pd.DataFrame:
+    """同时取得基金与东方财富同类平均的累计收益率曲线。"""
+    period_map = {
+        "1月": "m",
+        "3月": "q",
+        "6月": "hy",
+        "1年": "y",
+        "3年": "try",
+        "5年": "fiy",
+        "今年来": "sy",
+        "成立来": "se",
+    }
+    response = requests.get(
+        "https://api.fund.eastmoney.com/pinzhong/LJSYLZS",
+        params={
+            "fundCode": symbol,
+            "indexcode": "000300",
+            "type": period_map[period],
+        },
+        headers={"Referer": "https://fund.eastmoney.com/"},
+        timeout=20,
+    )
+    response.raise_for_status()
+    series = response.json().get("Data") or []
+    if not series:
+        return pd.DataFrame()
+
+    fund_series = next(
+        (
+            item
+            for item in series
+            if str(item.get("name") or "") not in ("同类平均", "沪深300")
+        ),
+        series[0],
+    )
+    peer_series = next(
+        (
+            item
+            for item in series
+            if str(item.get("name") or "") == "同类平均"
+        ),
+        None,
+    )
+    fund_frame = _return_series_frame(fund_series, "累计收益率")
+    peer_frame = _return_series_frame(peer_series, "同类平均")
+    if fund_frame.empty or peer_frame.empty:
+        return fund_frame
+    return fund_frame.merge(peer_frame, on="日期", how="outer").sort_values("日期")
+
+
+def _build_peer_performance(
+    peer_type: Any,
+    achievement: pd.DataFrame,
+    return_frames: dict[str, pd.DataFrame],
+    performance: dict[str, Any],
+) -> dict[str, Any]:
+    """整合同类平均、周期排名及相对同类差异。"""
+    rank_by_period: dict[str, str] = {}
+    if not achievement.empty and {
+        "周期",
+        "周期收益同类排名",
+    }.issubset(achievement.columns):
+        for _, row in achievement.iterrows():
+            period = str(row.get("周期") or "").strip()
+            rank = str(row.get("周期收益同类排名") or "").strip()
+            if period and re.fullmatch(r"\d+\s*/\s*\d+", rank):
+                rank_by_period[period] = re.sub(r"\s+", "", rank)
+
+    range_by_period = {
+        "近1月": "1m",
+        "近3月": "3m",
+        "近6月": "6m",
+        "今年以来": "ytd",
+        "近1年": "1y",
+        "近3年": "3y",
+        "成立以来": "all",
+    }
+    details: dict[str, dict[str, Any]] = {}
+    for period, range_key in range_by_period.items():
+        frame = return_frames.get(range_key, pd.DataFrame())
+        peer_values = (
+            pd.to_numeric(frame["同类平均"], errors="coerce").dropna()
+            if "同类平均" in frame.columns
+            else pd.Series(dtype=float)
+        )
+        peer_average = (
+            round(float(peer_values.iloc[-1]), 4)
+            if not peer_values.empty
+            else None
+        )
+        fund_return = _finite_float(performance.get(period))
+        relative_ratio = None
+        excess_return = None
+        if fund_return is not None and peer_average is not None:
+            excess_return = round(fund_return - peer_average, 4)
+            if abs(peer_average) > 1e-12:
+                relative_ratio = round(
+                    (fund_return - peer_average) / abs(peer_average) * 100,
+                    4,
+                )
+
+        rank_text = rank_by_period.get(period)
+        rank_value = None
+        peer_count = None
+        percentile = None
+        if rank_text:
+            rank_value, peer_count = (
+                int(value) for value in rank_text.split("/", maxsplit=1)
+            )
+            if peer_count > 0:
+                percentile = round(rank_value / peer_count * 100, 4)
+
+        details[period] = {
+            "同类平均": peer_average,
+            "相对同类差异比例": relative_ratio,
+            "超额收益": excess_return,
+            "同类排名": rank_text,
+            "排名": rank_value,
+            "同类数量": peer_count,
+            "排名分位": percentile,
+        }
+
+    return {
+        "可用": any(
+            row["同类平均"] is not None or row["同类排名"]
+            for row in details.values()
+        ),
+        "同类": _clean(peer_type),
+        "阶段": details,
+        "相对差异口径": "（基金涨幅－同类平均）÷同类平均绝对值",
+        "说明": (
+            "同类由下游数据源按基金类型划分，不等同于跟踪同一指数的"
+            "严格赛道；同类平均来自东方财富，同类排名来自雪球基金。"
+        ),
+    }
+
+
 def _fallback_performance(
     code: str,
     warnings: list[str],
     unit_nav: pd.DataFrame | None = None,
     cumulative_nav: pd.DataFrame | None = None,
+    achievement: pd.DataFrame | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """排行接口不可用时，从单基金接口补充净值和区间业绩。"""
     performance: dict[str, Any] = {}
     net_value: dict[str, Any] = {}
 
-    achievement = _safe_call(
-        "单基金阶段业绩",
-        ak.fund_individual_achievement_xq,
-        warnings,
-        symbol=code,
-    )
+    if achievement is None:
+        achievement = _safe_call(
+            "单基金阶段业绩",
+            ak.fund_individual_achievement_xq,
+            warnings,
+            symbol=code,
+        )
     if not achievement.empty and {"周期", "本产品区间收益"}.issubset(
         achievement.columns
     ):
@@ -1236,6 +2093,147 @@ def _fallback_performance(
     return net_value, performance
 
 
+def get_fund_holdings_by_period(
+    fund_code: str,
+    period_key: str,
+    holdings_limit: int | None = None,
+) -> dict[str, Any]:
+    """按需查询基金指定季度的公开披露持仓。"""
+    code = _normalize_code(fund_code)
+    year, quarter = _quarter_key(period_key)
+    if holdings_limit is not None and holdings_limit <= 0:
+        raise ValueError("holdings_limit 必须大于 0。")
+
+    warnings: list[str] = []
+    stock_frame = _safe_call(
+        "股票持仓",
+        ak.fund_portfolio_hold_em,
+        warnings,
+        symbol=code,
+        date=str(year),
+    )
+    bond_frame = _safe_call(
+        "债券持仓",
+        ak.fund_portfolio_bond_hold_em,
+        warnings,
+        symbol=code,
+        date=str(year),
+    )
+    stock_holdings, stock_period = _holdings_for_period(
+        stock_frame,
+        year,
+        quarter,
+        limit=holdings_limit,
+    )
+    bond_holdings, bond_period = _holdings_for_period(
+        bond_frame,
+        year,
+        quarter,
+        limit=holdings_limit,
+    )
+
+    industry_frame = (
+        _safe_call(
+            "股票行业配置",
+            ak.fund_portfolio_industry_allocation_em,
+            warnings,
+            symbol=code,
+            date=str(year),
+        )
+        if stock_holdings
+        else pd.DataFrame()
+    )
+    industry, industry_period = _industry_allocation_for_period(
+        industry_frame,
+        year,
+        quarter,
+    )
+    (
+        asset_allocation,
+        bond_type_structure,
+        report_catalog,
+        fund_holdings,
+    ) = _load_portfolio_report(
+        code,
+        warnings,
+        period_key=period_key,
+    )
+    bond_holdings, bond_maturity_structure = _enrich_bond_holdings(
+        bond_holdings,
+        bond_period,
+    )
+    stock_holdings, stock_valuation_summary = _enrich_stock_holdings(
+        stock_holdings,
+        warnings,
+    )
+    current_report = next(
+        (
+            report
+            for report in report_catalog
+            if report["key"] == period_key
+        ),
+        None,
+    )
+    fund_holdings_period = (
+        asset_allocation.get("报告期") if fund_holdings else None
+    )
+    primary_holdings = fund_holdings or stock_holdings or bond_holdings
+    period_label = f"{year}年第{quarter}季度"
+    return {
+        "季度Key": period_key,
+        "报告期": period_label,
+        "数量": len(stock_holdings) + len(bond_holdings) + len(fund_holdings),
+        "资产分布": asset_allocation,
+        "资产分类": [
+            asset_type
+            for asset_type, rows in (
+                ("股票", stock_holdings),
+                ("债券", bond_holdings),
+                ("基金", fund_holdings),
+            )
+            if rows
+        ],
+        "单位说明": {
+            "占净值比例": "%",
+            "持股数": "万股",
+            "持仓市值": "万元",
+        },
+        "明细": primary_holdings,
+        "股票持仓": {
+            "报告期": stock_period or period_label,
+            "数量": len(stock_holdings),
+            "明细": stock_holdings,
+            "估值概览": stock_valuation_summary,
+        },
+        "债券持仓": {
+            "报告期": bond_period or period_label,
+            "数量": len(bond_holdings),
+            "明细": bond_holdings,
+            "品种结构": bond_type_structure,
+            "期限结构": bond_maturity_structure,
+        },
+        "基金投资": _fund_investment_group(
+            fund_holdings,
+            fund_holdings_period or period_label,
+        ),
+        "板块配置": {
+            "可用": bool(industry),
+            "口径": "基金定期报告中的股票行业配置",
+            "报告期": industry_period or period_label,
+            "数量": len(industry),
+            "明细": industry,
+            "说明": (
+                "板块数据来自基金指定季度的定期报告披露。"
+                if industry
+                else "该季度暂无可用的股票行业配置。"
+            ),
+        },
+        "季报列表": report_catalog,
+        "当前季报": current_report,
+        "提示": warnings,
+    }
+
+
 def get_fund_data(
     fund_code: str, holdings_limit: int | None = None
 ) -> dict[str, Any]:
@@ -1263,6 +2261,12 @@ def get_fund_data(
     scale_details = _extract_scale_details(overview, xq)
     holder_structure = _load_holder_structure(code, warnings)
     purchase_fee = _load_purchase_fee(code, warnings)
+    achievement_frame = _safe_call(
+        "单基金阶段业绩",
+        ak.fund_individual_achievement_xq,
+        warnings,
+        symbol=code,
+    )
 
     rank_row, rank_source = _load_rank_row(code, warnings)
     net_value = {
@@ -1288,13 +2292,6 @@ def get_fund_data(
         "单位净值": {"indicator": "单位净值走势"},
         "累计净值": {"indicator": "累计净值走势"},
         "分红": {"indicator": "分红送配详情"},
-        "收益_all": {"indicator": "累计收益率走势", "period": "成立来"},
-        "收益_5y": {"indicator": "累计收益率走势", "period": "5年"},
-        "收益_3y": {"indicator": "累计收益率走势", "period": "3年"},
-        "收益_1y": {"indicator": "累计收益率走势", "period": "1年"},
-        "收益_6m": {"indicator": "累计收益率走势", "period": "6月"},
-        "收益_3m": {"indicator": "累计收益率走势", "period": "3月"},
-        "收益_1m": {"indicator": "累计收益率走势", "period": "1月"},
     }
     nav_frames = {
         key: _safe_call(
@@ -1306,6 +2303,32 @@ def get_fund_data(
         )
         for key, kwargs in nav_requests.items()
     }
+    return_periods = {
+        "all": "成立来",
+        "5y": "5年",
+        "3y": "3年",
+        "1y": "1年",
+        "6m": "6月",
+        "3m": "3月",
+        "1m": "1月",
+        "ytd": "今年来",
+    }
+    return_frames = {
+        range_key: _safe_call(
+            f"历史收益_{range_key}",
+            _load_return_comparison_em,
+            warnings,
+            symbol=code,
+            period=period,
+        )
+        for range_key, period in return_periods.items()
+    }
+    nav_frames.update(
+        {
+            f"收益_{range_key}": frame
+            for range_key, frame in return_frames.items()
+        }
+    )
 
     nav_history_frame = nav_frames["单位净值"]
     cumulative_nav_frame = nav_frames["累计净值"]
@@ -1327,6 +2350,7 @@ def get_fund_data(
             warnings,
             unit_nav=nav_history_frame,
             cumulative_nav=cumulative_nav_frame,
+            achievement=achievement_frame,
         )
         for key, value in fallback_nav.items():
             if net_value.get(key) is None and value is not None:
@@ -1390,9 +2414,12 @@ def get_fund_data(
     industry_allocation, industry_period = _latest_industry_allocation(
         industry_frame
     )
-    asset_allocation, bond_type_structure = _load_portfolio_report(
-        code, warnings
-    )
+    (
+        asset_allocation,
+        bond_type_structure,
+        quarter_reports,
+        fund_holdings,
+    ) = _load_portfolio_report(code, warnings)
     bond_holdings, bond_maturity_structure = _enrich_bond_holdings(
         bond_holdings, bond_holdings_period
     )
@@ -1440,13 +2467,26 @@ def get_fund_data(
             target_etf_industry_period,
         ) = _latest_industry_allocation(target_etf_industry_frame)
 
+    stock_holdings, stock_valuation_summary = _enrich_stock_holdings(
+        stock_holdings,
+        warnings,
+    )
+    target_etf_holdings, target_etf_valuation_summary = _enrich_stock_holdings(
+        target_etf_holdings,
+        warnings,
+    )
     target_etf_row = _first_row(target_etf_overview)
     target_etf_name = _pick(
         target_etf_row.get("基金简称"),
         target_etf_row.get("基金全称"),
     )
-    primary_holdings = stock_holdings or bond_holdings
-    primary_period = stock_holdings_period or bond_holdings_period
+    fund_holdings_period = (
+        asset_allocation.get("报告期") if fund_holdings else None
+    )
+    primary_holdings = fund_holdings or stock_holdings or bond_holdings
+    primary_period = (
+        fund_holdings_period or stock_holdings_period or bond_holdings_period
+    )
 
     basic = {
         "名称": _pick(
@@ -1471,6 +2511,12 @@ def get_fund_data(
         "管理费率": _pick(overview.get("管理费率"), xq.get("管理费")),
         "托管费率": _pick(overview.get("托管费率"), xq.get("托管费")),
     }
+    peer_performance = _build_peer_performance(
+        xq.get("基金类型") or basic["类型"],
+        achievement_frame,
+        return_frames,
+        performance,
+    )
 
     if not any((basic["名称"], net_value["单位净值"], primary_holdings)):
         details = "；".join(warnings[-3:]) if warnings else "AKShare 未返回数据"
@@ -1486,10 +2532,12 @@ def get_fund_data(
         "基础资料": basic,
         "净值信息": net_value,
         "历史业绩": performance,
+        "同类表现": peer_performance,
         "赛道基准建议": recommend_track_benchmark(
             str(basic["名称"] or ""),
             str(basic["类型"] or ""),
             bond_type_structure.get("明细", []),
+            performance_benchmark=str(basic["业绩比较基准"] or ""),
         ),
         "净值曲线": {
             "指标": "单位净值",
@@ -1516,14 +2564,28 @@ def get_fund_data(
             "分红事件": dividends,
         },
         "基金持仓": {
+            "季度Key": _quarter_key_from_period(primary_period),
             "报告期": primary_period,
-            "数量": len(stock_holdings) + len(bond_holdings),
+            "数量": (
+                len(stock_holdings) + len(bond_holdings) + len(fund_holdings)
+            ),
             "资产分布": asset_allocation,
+            "季报列表": quarter_reports,
+            "当前季报": next(
+                (
+                    report
+                    for report in quarter_reports
+                    if report["key"]
+                    == _quarter_key_from_period(primary_period)
+                ),
+                None,
+            ),
             "资产分类": [
                 asset_type
                 for asset_type, rows in (
                     ("股票", stock_holdings),
                     ("债券", bond_holdings),
+                    ("基金", fund_holdings),
                 )
                 if rows
             ],
@@ -1537,6 +2599,7 @@ def get_fund_data(
                 "报告期": stock_holdings_period,
                 "数量": len(stock_holdings),
                 "明细": stock_holdings,
+                "估值概览": stock_valuation_summary,
             },
             "债券持仓": {
                 "报告期": bond_holdings_period,
@@ -1545,6 +2608,10 @@ def get_fund_data(
                 "品种结构": bond_type_structure,
                 "期限结构": bond_maturity_structure,
             },
+            "基金投资": _fund_investment_group(
+                fund_holdings,
+                fund_holdings_period,
+            ),
             "板块配置": {
                 "可用": bool(industry_allocation),
                 "口径": "基金定期报告中的股票行业配置",
@@ -1571,6 +2638,7 @@ def get_fund_data(
                 "报告期": target_etf_period,
                 "数量": len(target_etf_holdings),
                 "明细": target_etf_holdings,
+                "估值概览": target_etf_valuation_summary,
                 "权重口径": (
                     "目标 ETF 内部占净值比例，未乘以联接基金持有目标 ETF 的比例"
                 ),
@@ -1604,12 +2672,17 @@ def get_fund_data(
                 "AKShare.fund_open_fund_info_em"
                 "（累计收益率/累计净值/单位净值/分红送配）"
             ),
+            "同类表现": (
+                "东方财富同类平均累计收益率 + "
+                "AKShare.fund_individual_achievement_xq 同类排名"
+            ),
             "持仓": [
                 "AKShare.fund_portfolio_hold_em",
                 "AKShare.fund_portfolio_bond_hold_em",
                 "AKShare.fund_portfolio_industry_allocation_em",
                 "AKShare.fund_announcement_report_em + 最新季度报告 PDF",
                 "AKShare.bond_info_detail_cm（中国货币网债券详情）",
+                "巨潮资讯/东方财富个股行业与估值、AKShare/Sina 股票分红及新浪批量行情",
                 "东方财富基金详情页相关 ETF 链接",
             ],
             "查询时间": datetime.now().astimezone().isoformat(timespec="seconds"),

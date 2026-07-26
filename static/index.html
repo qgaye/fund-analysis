@@ -12,7 +12,7 @@
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%23f1eddf' stroke='%23151916' stroke-width='3'/%3E%3Ctext x='32' y='38' text-anchor='middle' font-family='serif' font-size='18' font-weight='700' fill='%23151916'%3EFL%3C/text%3E%3C/svg%3E"
     />
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260726.22" />
   </head>
   <body>
     <div class="paper-noise" aria-hidden="true"></div>
@@ -117,12 +117,15 @@
               <strong id="benchmark">—</strong>
             </div>
           </div>
-          <button id="refresh-button" class="refresh-button" type="button">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7" />
-            </svg>
-            刷新数据
-          </button>
+          <div class="fund-refresh-control">
+            <button id="refresh-button" class="refresh-button" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7" />
+              </svg>
+              <span>强制刷新</span>
+            </button>
+            <small id="fund-cache-note">日缓存 · 收盘后更新</small>
+          </div>
         </header>
 
         <details class="fund-profile-section compact-profile" aria-labelledby="fund-profile-title">
@@ -270,23 +273,20 @@
                 >
                   业绩走势
                 </button>
+                <button type="button" data-nav-metric="回撤修复" role="tab">
+                  回撤修复
+                </button>
                 <button type="button" data-nav-metric="阶段收益" role="tab">
                   阶段涨幅
-                </button>
-                <button type="button" data-nav-metric="累计净值" role="tab">
-                  累计净值
-                </button>
-                <button type="button" data-nav-metric="单位净值" role="tab">
-                  单位净值
-                </button>
-                <button type="button" data-nav-metric="分红记录" role="tab">
-                  分红记录
                 </button>
                 <button type="button" data-nav-metric="周期收益" role="tab">
                   周期涨幅
                 </button>
-                <button type="button" data-nav-metric="回撤修复" role="tab">
-                  回撤修复
+                <button type="button" data-nav-metric="累计净值" role="tab">
+                  累计净值
+                </button>
+                <button type="button" data-nav-metric="分红记录" role="tab">
+                  分红记录
                 </button>
               </div>
               <div
@@ -321,6 +321,9 @@
                     </optgroup>
                     <optgroup label="股债组合">
                       <option value="fixed_income_plus_80_20">固收+ 80/20</option>
+                      <option value="equity_bond_80_20">
+                        80%沪深300 + 20%中债新综合财富
+                      </option>
                     </optgroup>
                   </select>
                 </label>
@@ -367,9 +370,37 @@
             </div>
           </div>
 
+          <section
+            id="drawdown-comparison"
+            class="drawdown-comparison"
+            aria-label="基金与赛道基准回撤修复对比"
+            hidden
+          >
+            <header>
+              <div>
+                <span class="section-label">DRAWDOWN BENCHMARK</span>
+                <h3>回撤修复对照</h3>
+              </div>
+              <span>同一观察区间</span>
+            </header>
+            <div class="drawdown-comparison-grid">
+              <span class="drawdown-metric-heading">指标</span>
+              <strong id="drawdown-fund-heading">基金</strong>
+              <strong id="drawdown-benchmark-heading">赛道基准</strong>
+
+              <span>最大回撤比例</span>
+              <strong id="drawdown-fund-value">—</strong>
+              <strong id="drawdown-benchmark-value">—</strong>
+
+              <span>最大回撤修复天数</span>
+              <strong id="drawdown-fund-recovery">—</strong>
+              <strong id="drawdown-benchmark-recovery">—</strong>
+            </div>
+          </section>
+
           <div id="nav-chart-shell" class="nav-chart-shell">
             <div id="nav-chart-legend" class="nav-chart-legend">
-              <span class="fund-series">基金涨幅</span>
+              <span id="nav-chart-fund-legend" class="fund-series">基金涨幅</span>
               <span id="benchmark-legend-label" class="benchmark-series">赛道基准</span>
             </div>
             <svg
@@ -377,7 +408,7 @@
               viewBox="0 0 1000 360"
               preserveAspectRatio="none"
               role="img"
-              aria-label="基金单位净值曲线"
+              aria-label="基金净值与收益曲线"
             ></svg>
             <div id="nav-chart-tooltip" class="nav-chart-tooltip" hidden>
               <span></span>
@@ -428,7 +459,13 @@
                 </button>
               </div>
             </div>
-            <div id="periodic-returns-grid" class="periodic-returns-grid"></div>
+            <div class="periodic-returns-list-heading">
+              <span>周期</span>
+              <span>基金涨幅</span>
+              <span id="periodic-benchmark-heading">赛道涨幅</span>
+              <span>相对赛道</span>
+            </div>
+            <div id="periodic-returns-grid" class="periodic-returns-list"></div>
             <div id="periodic-returns-empty" class="periodic-returns-empty" hidden>
               暂无足够的净值数据用于计算周期涨幅。
             </div>
@@ -439,13 +476,26 @@
             aria-label="阶段涨幅"
             hidden
           >
-            <div class="stage-performance-list-heading">
-              <span>阶段</span>
-              <span>基金涨幅</span>
-              <span id="stage-benchmark-heading">赛道涨幅</span>
-              <span>相对赛道</span>
+            <div id="stage-peer-context" class="stage-peer-context" hidden>
+              <div>
+                <span>COMPARISON UNIVERSE</span>
+                <strong>同类口径</strong>
+              </div>
+              <strong id="stage-peer-type">—</strong>
+              <p id="stage-peer-note">同类由下游数据源按基金类型划分。</p>
             </div>
-            <div id="performance-chart" class="stage-performance-list"></div>
+            <div class="stage-performance-scroll">
+              <div class="stage-performance-list-heading">
+                <span>阶段</span>
+                <span>基金涨幅</span>
+                <span>同类平均</span>
+                <span>相对同类</span>
+                <span>同类排名</span>
+                <span id="stage-benchmark-heading">赛道涨幅</span>
+                <span>相对赛道</span>
+              </div>
+              <div id="performance-chart" class="stage-performance-list"></div>
+            </div>
           </div>
           <p id="nav-chart-note" class="nav-chart-note">
             所选区间首日归零，不代表投资者从基金成立日起持有。
@@ -557,7 +607,7 @@
           <div class="holdings-heading">
             <div>
               <p class="eyebrow">PORTFOLIO DISCLOSURE</p>
-              <h2>最新基金持仓</h2>
+              <h2>基金持仓</h2>
               <p id="holdings-period">—</p>
               <p id="holdings-context" class="holdings-context" hidden></p>
             </div>
@@ -568,6 +618,45 @@
                 <span>项披露持仓</span>
               </div>
             </div>
+          </div>
+
+          <div id="holdings-explorer" class="holdings-explorer" hidden>
+            <div class="quarter-switcher">
+              <div>
+                <span class="section-label">REPORTING PERIOD</span>
+                <label for="holdings-quarter-select">选择持仓季度</label>
+                <p>切换后按需查询该季度披露的股票、债券与基金持仓。</p>
+              </div>
+              <div class="quarter-select-control">
+                <select
+                  id="holdings-quarter-select"
+                  aria-label="选择基金持仓季度"
+                ></select>
+                <span aria-hidden="true">↓</span>
+              </div>
+              <p
+                id="holdings-quarter-status"
+                class="holdings-quarter-status"
+                role="status"
+              >
+                <i></i>
+                <span>最新披露</span>
+              </p>
+            </div>
+
+            <section class="quarter-report-panel" aria-labelledby="quarter-report-title">
+              <header>
+                <div>
+                  <span class="section-label">QUARTERLY REPORT ARCHIVE</span>
+                  <h3 id="quarter-report-title">季度报告</h3>
+                </div>
+                <p>
+                  <strong id="quarter-report-count">0</strong>
+                  <span>份原始报告</span>
+                </p>
+              </header>
+              <div id="quarter-report-list" class="quarter-report-list"></div>
+            </section>
           </div>
 
           <div id="holdings-content" class="holdings-content">
@@ -592,6 +681,35 @@
                 id="asset-allocation-stats"
                 class="asset-allocation-stats"
               ></div>
+              <aside
+                id="target-fund-disclosure"
+                class="target-fund-disclosure"
+                aria-label="ETF 联接基金原始持仓"
+                hidden
+              >
+                <div class="target-fund-marker">
+                  <span>ORIGINAL POSITION</span>
+                  <strong>原始基金持仓</strong>
+                </div>
+                <div class="target-fund-identity">
+                  <strong id="target-fund-name">—</strong>
+                  <span id="target-fund-code">—</span>
+                </div>
+                <dl class="target-fund-metrics">
+                  <div>
+                    <dt>占基金净值</dt>
+                    <dd id="target-fund-weight">—</dd>
+                  </div>
+                  <div>
+                    <dt>持仓市值</dt>
+                    <dd id="target-fund-market-value">—</dd>
+                  </div>
+                </dl>
+                <div id="target-fund-status" class="target-fund-status">
+                  <i aria-hidden="true"></i>
+                  <span>已穿透至底层股票</span>
+                </div>
+              </aside>
               <p id="asset-allocation-note" class="matrix-note">
                 资产分布来自基金最新季度报告。
               </p>
@@ -653,6 +771,88 @@
               </article>
             </div>
 
+            <article
+              id="stock-fundamentals-panel"
+              class="stock-fundamentals-panel"
+              hidden
+            >
+              <header class="stock-fundamentals-heading">
+                <div>
+                  <span class="section-label">STOCK FUNDAMENTALS</span>
+                  <h3>持仓股票估值与质量</h3>
+                </div>
+                <div class="stock-fundamentals-coverage">
+                  <strong id="stock-fundamentals-coverage">0 / 0</strong>
+                  <span>指标覆盖</span>
+                </div>
+              </header>
+              <div class="stock-fundamentals-grid">
+                <div>
+                  <div class="metric-card-label">
+                    <span>加权 PE</span>
+                    <button
+                      class="metric-help-trigger"
+                      type="button"
+                      data-metric-help="PE"
+                      aria-label="查看 PE 指标说明"
+                      aria-haspopup="dialog"
+                      aria-controls="metric-help-dialog"
+                    >i</button>
+                  </div>
+                  <strong id="stock-weighted-pe">—</strong>
+                  <small>TTM</small>
+                </div>
+                <div>
+                  <div class="metric-card-label">
+                    <span>加权 PB</span>
+                    <button
+                      class="metric-help-trigger"
+                      type="button"
+                      data-metric-help="PB"
+                      aria-label="查看 PB 指标说明"
+                      aria-haspopup="dialog"
+                      aria-controls="metric-help-dialog"
+                    >i</button>
+                  </div>
+                  <strong id="stock-weighted-pb">—</strong>
+                  <small>MRQ</small>
+                </div>
+                <div>
+                  <div class="metric-card-label">
+                    <span>加权 ROE</span>
+                    <button
+                      class="metric-help-trigger"
+                      type="button"
+                      data-metric-help="ROE"
+                      aria-label="查看 ROE 指标说明"
+                      aria-haspopup="dialog"
+                      aria-controls="metric-help-dialog"
+                    >i</button>
+                  </div>
+                  <strong id="stock-weighted-roe">—</strong>
+                  <small>PB ÷ PE</small>
+                </div>
+                <div>
+                  <div class="metric-card-label">
+                    <span>加权股息率</span>
+                    <button
+                      class="metric-help-trigger"
+                      type="button"
+                      data-metric-help="股息率"
+                      aria-label="查看股息率指标说明"
+                      aria-haspopup="dialog"
+                      aria-controls="metric-help-dialog"
+                    >i</button>
+                  </div>
+                  <strong id="stock-weighted-dividend-yield">—</strong>
+                  <small>近 12 个月</small>
+                </div>
+              </div>
+              <p id="stock-fundamentals-note" class="matrix-note">
+                按已披露股票占净值比例，对可用指标分别加权。
+              </p>
+            </article>
+
             <div class="holdings-detail">
               <div class="detail-heading">
                 <span class="section-label">DISCLOSED POSITIONS</span>
@@ -664,7 +864,56 @@
                     <tr>
                       <th>排名</th>
                       <th>证券</th>
+                      <th class="stock-industry-column">行业</th>
                       <th id="holding-weight-heading">占净值</th>
+                      <th class="stock-fundamental-column">
+                        <span class="table-metric-label">PE
+                          <button
+                            class="metric-help-trigger"
+                            type="button"
+                            data-metric-help="PE"
+                            aria-label="查看 PE 指标说明"
+                            aria-haspopup="dialog"
+                            aria-controls="metric-help-dialog"
+                          >i</button>
+                        </span>
+                      </th>
+                      <th class="stock-fundamental-column">
+                        <span class="table-metric-label">PB
+                          <button
+                            class="metric-help-trigger"
+                            type="button"
+                            data-metric-help="PB"
+                            aria-label="查看 PB 指标说明"
+                            aria-haspopup="dialog"
+                            aria-controls="metric-help-dialog"
+                          >i</button>
+                        </span>
+                      </th>
+                      <th class="stock-fundamental-column">
+                        <span class="table-metric-label">ROE
+                          <button
+                            class="metric-help-trigger"
+                            type="button"
+                            data-metric-help="ROE"
+                            aria-label="查看 ROE 指标说明"
+                            aria-haspopup="dialog"
+                            aria-controls="metric-help-dialog"
+                          >i</button>
+                        </span>
+                      </th>
+                      <th class="stock-fundamental-column">
+                        <span class="table-metric-label">股息率
+                          <button
+                            class="metric-help-trigger"
+                            type="button"
+                            data-metric-help="股息率"
+                            aria-label="查看股息率指标说明"
+                            aria-haspopup="dialog"
+                            aria-controls="metric-help-dialog"
+                          >i</button>
+                        </span>
+                      </th>
                       <th id="quantity-heading">持股数</th>
                       <th>持仓市值</th>
                     </tr>
@@ -672,7 +921,7 @@
                   <tbody id="holdings-table"></tbody>
                 </table>
                 <div id="no-holdings" class="no-holdings" hidden>
-                  该基金暂无可用的股票或债券持仓数据。
+                  该基金暂无可用的股票、债券或基金持仓数据。
                 </div>
               </div>
             </div>
@@ -691,11 +940,422 @@
       </section>
     </main>
 
+    <dialog
+      id="stock-detail-dialog"
+      class="stock-detail-dialog"
+      aria-labelledby="stock-detail-name"
+    >
+      <div class="stock-detail-sheet">
+        <button
+          id="stock-detail-close"
+          class="stock-detail-close"
+          type="button"
+          aria-label="关闭股票详情"
+        >
+          <span>关闭</span>
+          <b aria-hidden="true">×</b>
+        </button>
+
+        <div id="stock-detail-loading" class="stock-detail-loading">
+          <span class="stock-loading-rule" aria-hidden="true"></span>
+          <p class="eyebrow">READING STOCK TAPE</p>
+          <strong>正在读取股票资料与价格趋势…</strong>
+        </div>
+
+        <div id="stock-detail-error" class="stock-detail-error" hidden>
+          <span>!</span>
+          <div>
+            <p class="eyebrow">STOCK QUERY INTERRUPTED</p>
+            <strong>股票详情暂时不可用</strong>
+            <p id="stock-detail-error-message">请稍后重试。</p>
+          </div>
+        </div>
+
+        <div id="stock-detail-content" hidden>
+          <header class="stock-detail-header">
+            <div>
+              <p class="eyebrow">POSITION RESEARCH / 持仓个股研究</p>
+              <div class="stock-detail-title">
+                <h2 id="stock-detail-name">—</h2>
+                <span id="stock-detail-code">000000</span>
+              </div>
+              <div class="stock-detail-tags">
+                <span id="stock-detail-industry">行业暂无</span>
+                <span id="stock-detail-market">市场暂无</span>
+                <span id="stock-detail-listed">上市日期暂无</span>
+              </div>
+            </div>
+            <div class="stock-price-stamp">
+              <span>最新价格</span>
+              <strong id="stock-detail-price">—</strong>
+              <small id="stock-detail-change">—</small>
+              <time id="stock-detail-price-date">行情日期暂无</time>
+              <div class="stock-refresh-control">
+                <button id="stock-detail-refresh" type="button">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M20 7v5h-5M4 17v-5h5" />
+                    <path d="M18.2 9A7 7 0 0 0 6.3 6.4L4 9M5.8 15A7 7 0 0 0 17.7 17.6L20 15" />
+                  </svg>
+                  <span>强制刷新</span>
+                </button>
+                <em id="stock-detail-cache-note">日缓存 · 收盘后更新</em>
+              </div>
+            </div>
+          </header>
+
+          <section class="stock-metrics-section">
+            <header>
+              <div>
+                <span class="section-label">VALUATION &amp; QUALITY</span>
+                <h3>估值与交易指标</h3>
+              </div>
+              <p id="stock-detail-metric-note">查询时点数据</p>
+            </header>
+            <div class="stock-detail-metrics">
+              <div>
+                <div class="metric-card-label">
+                  <span>PE</span>
+                  <button
+                    class="metric-help-trigger"
+                    type="button"
+                    data-metric-help="PE"
+                    aria-label="查看 PE 指标说明"
+                    aria-haspopup="dialog"
+                    aria-controls="metric-help-dialog"
+                  >i</button>
+                </div>
+                <strong id="stock-detail-pe">—</strong>
+                <small>TTM</small>
+              </div>
+              <div>
+                <div class="metric-card-label">
+                  <span>PB</span>
+                  <button
+                    class="metric-help-trigger"
+                    type="button"
+                    data-metric-help="PB"
+                    aria-label="查看 PB 指标说明"
+                    aria-haspopup="dialog"
+                    aria-controls="metric-help-dialog"
+                  >i</button>
+                </div>
+                <strong id="stock-detail-pb">—</strong>
+                <small>MRQ</small>
+              </div>
+              <div>
+                <div class="metric-card-label">
+                  <span>ROE</span>
+                  <button
+                    class="metric-help-trigger"
+                    type="button"
+                    data-metric-help="ROE"
+                    aria-label="查看 ROE 指标说明"
+                    aria-haspopup="dialog"
+                    aria-controls="metric-help-dialog"
+                  >i</button>
+                </div>
+                <strong id="stock-detail-roe">—</strong>
+                <small>PB ÷ PE 推算</small>
+              </div>
+              <div>
+                <div class="metric-card-label">
+                  <span>股息率</span>
+                  <button
+                    class="metric-help-trigger"
+                    type="button"
+                    data-metric-help="股息率"
+                    aria-label="查看股息率指标说明"
+                    aria-haspopup="dialog"
+                    aria-controls="metric-help-dialog"
+                  >i</button>
+                </div>
+                <strong id="stock-detail-dividend-yield">—</strong>
+                <small>近 12 个月</small>
+              </div>
+              <div>
+                <div class="metric-card-label">
+                  <span>换手率</span>
+                  <button
+                    class="metric-help-trigger"
+                    type="button"
+                    data-metric-help="换手率"
+                    aria-label="查看换手率指标说明"
+                    aria-haspopup="dialog"
+                    aria-controls="metric-help-dialog"
+                  >i</button>
+                </div>
+                <strong id="stock-detail-turnover">—</strong>
+                <small>最新交易日</small>
+              </div>
+            </div>
+          </section>
+
+          <section class="stock-price-section">
+            <header class="stock-price-heading">
+              <div>
+                <span class="section-label">CLOSING PRICE TREND</span>
+                <h3>收盘价格变化趋势</h3>
+                <p>前复权日收盘价 · 不使用 K 线</p>
+              </div>
+              <div
+                class="stock-range-switcher"
+                role="tablist"
+                aria-label="股票价格趋势区间"
+              >
+                <button type="button" data-stock-range="all">成立以来</button>
+                <button type="button" data-stock-range="5y">5年</button>
+                <button type="button" data-stock-range="3y">3年</button>
+                <button type="button" data-stock-range="1y" class="active">1年</button>
+                <button type="button" data-stock-range="6m">6月</button>
+                <button type="button" data-stock-range="3m">3月</button>
+                <button type="button" data-stock-range="1m">1月</button>
+              </div>
+            </header>
+            <div class="stock-chart-summary">
+              <div>
+                <span>区间涨跌</span>
+                <strong id="stock-range-change">—</strong>
+              </div>
+              <div>
+                <span>区间最高</span>
+                <strong id="stock-range-high">—</strong>
+              </div>
+              <div>
+                <span>区间最低</span>
+                <strong id="stock-range-low">—</strong>
+              </div>
+              <div>
+                <span>覆盖日期</span>
+                <strong id="stock-range-dates">—</strong>
+              </div>
+            </div>
+            <div class="stock-chart-shell">
+              <svg
+                id="stock-price-chart"
+                viewBox="0 0 1000 340"
+                preserveAspectRatio="none"
+                role="img"
+                aria-label="股票前复权收盘价曲线"
+              ></svg>
+              <div id="stock-chart-tooltip" class="stock-chart-tooltip" hidden>
+                <span>—</span>
+                <strong>—</strong>
+              </div>
+              <p id="stock-chart-empty" class="stock-chart-empty" hidden>
+                该区间暂无可用的收盘价数据。
+              </p>
+            </div>
+          </section>
+
+          <footer class="stock-detail-footer">
+            <p id="stock-detail-warnings" hidden></p>
+            <span>公开数据仅供研究参考，不构成投资建议。</span>
+            <time id="stock-detail-query-time">—</time>
+          </footer>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog
+      id="metric-help-dialog"
+      class="metric-help-dialog"
+      aria-labelledby="metric-help-title"
+    >
+      <div class="metric-help-sheet">
+        <button
+          id="metric-help-close"
+          class="metric-help-close"
+          type="button"
+          aria-label="关闭指标说明"
+        >
+          <span>关闭</span>
+          <b aria-hidden="true">×</b>
+        </button>
+
+        <header class="metric-help-heading">
+          <p class="eyebrow">METRIC FIELD GUIDE / 指标阅读指南</p>
+          <h2 id="metric-help-title">这些数字，应该怎么看？</h2>
+          <p>
+            估值指标不是单独的买卖信号。优先与同一行业、相近商业模式和自身历史区间比较，
+            再结合盈利质量、负债与行业周期判断。
+          </p>
+          <nav class="metric-help-nav" aria-label="快速查看指标说明">
+            <button type="button" data-metric-help="PE">PE</button>
+            <button type="button" data-metric-help="PB">PB</button>
+            <button type="button" data-metric-help="ROE">ROE</button>
+            <button type="button" data-metric-help="股息率">股息率</button>
+            <button type="button" data-metric-help="换手率">换手率</button>
+          </nav>
+        </header>
+
+        <div class="metric-help-content">
+          <article id="metric-help-pe" data-metric-help-card="PE">
+            <header>
+              <span>01 / PE</span>
+              <div>
+                <h3>市盈率 · Price to Earnings</h3>
+                <p>市场愿意为公司每 1 元盈利支付多少价格。</p>
+              </div>
+            </header>
+            <dl>
+              <div>
+                <dt>怎么算</dt>
+                <dd><code>PE = 总市值 ÷ 净利润</code>，也等于股价 ÷ 每股收益。</dd>
+              </div>
+              <div>
+                <dt>怎么看</dt>
+                <dd>
+                  例如 PE 20×，可理解为当前价格约为一年盈利的 20 倍。低 PE
+                  可能便宜，也可能反映增长放缓、盈利周期见顶或经营风险。
+                </dd>
+              </div>
+              <div>
+                <dt>项目口径</dt>
+                <dd>
+                  展示 TTM（最近十二个月）PE。亏损公司的负 PE 参考意义很弱；
+                  计算组合加权 PE 时会排除非正值。
+                </dd>
+              </div>
+            </dl>
+          </article>
+
+          <article id="metric-help-pb" data-metric-help-card="PB">
+            <header>
+              <span>02 / PB</span>
+              <div>
+                <h3>市净率 · Price to Book</h3>
+                <p>市场愿意为公司账面每 1 元净资产支付多少价格。</p>
+              </div>
+            </header>
+            <dl>
+              <div>
+                <dt>怎么算</dt>
+                <dd><code>PB = 总市值 ÷ 归母净资产</code>，也等于股价 ÷ 每股净资产。</dd>
+              </div>
+              <div>
+                <dt>怎么看</dt>
+                <dd>
+                  PB 低于 1× 表示市值低于账面净资产，但不一定是低估，也可能暗示资产质量或盈利能力较弱。
+                  PB 更适合银行、保险、制造等资产较重行业。
+                </dd>
+              </div>
+              <div>
+                <dt>项目口径</dt>
+                <dd>
+                  展示 MRQ（最近报告期）PB。轻资产、高 ROE 公司往往天然拥有更高 PB，
+                  应优先做同行比较；组合加权 PB 排除非正值。
+                </dd>
+              </div>
+            </dl>
+          </article>
+
+          <article id="metric-help-roe" data-metric-help-card="ROE">
+            <header>
+              <span>03 / ROE</span>
+              <div>
+                <h3>净资产收益率 · Return on Equity</h3>
+                <p>股东投入的每 1 元净资产，一年大致产生多少利润。</p>
+              </div>
+            </header>
+            <dl>
+              <div>
+                <dt>怎么算</dt>
+                <dd>
+                  标准定义是 <code>ROE = 归母净利润 ÷ 平均归母净资产 × 100%</code>。
+                </dd>
+              </div>
+              <div>
+                <dt>怎么看</dt>
+                <dd>
+                  ROE 15% 可粗略理解为每 100 元股东权益产生约 15 元利润。持续、稳定的高 ROE
+                  通常优于单年突然升高，但高负债、一次性收益或回购也可能推高 ROE。
+                </dd>
+              </div>
+              <div>
+                <dt>项目口径</dt>
+                <dd>
+                  当前项目没有直接读取财报 ROE，而是用
+                  <code>ROE ≈ PB ÷ PE × 100%</code> 推算。因 PE 为 TTM、PB 为 MRQ，
+                  这是便于横向观察的近似值，不应替代正式财报 ROE。
+                </dd>
+              </div>
+            </dl>
+          </article>
+
+          <article id="metric-help-dividend" data-metric-help-card="股息率">
+            <header>
+              <span>04 / DIVIDEND YIELD</span>
+              <div>
+                <h3>股息率</h3>
+                <p>过去一年现金分红相对于当前股价的比例。</p>
+              </div>
+            </header>
+            <dl>
+              <div>
+                <dt>怎么算</dt>
+                <dd><code>股息率 = 近 12 个月每股现金分红 ÷ 最新价 × 100%</code>。</dd>
+              </div>
+              <div>
+                <dt>怎么看</dt>
+                <dd>
+                  股息率 4% 表示按过去一年分红水平估算，现金回报约为当前股价的 4%。
+                  高股息可能来自稳定分红，也可能只是股价大跌，需检查分红是否可持续。
+                </dd>
+              </div>
+              <div>
+                <dt>项目口径</dt>
+                <dd>
+                  汇总查询日之前 365 天内已经除权除息的现金分红，再除以最新可用价格；
+                  不包含送股、未实施方案和股价涨跌收益。
+                </dd>
+              </div>
+            </dl>
+          </article>
+
+          <article id="metric-help-turnover" data-metric-help-card="换手率">
+            <header>
+              <span>05 / TURNOVER</span>
+              <div>
+                <h3>换手率</h3>
+                <p>一个交易日内，流通股票被交易的活跃程度。</p>
+              </div>
+            </header>
+            <dl>
+              <div>
+                <dt>怎么算</dt>
+                <dd><code>换手率 = 当日成交股数 ÷ 流通股数 × 100%</code>。</dd>
+              </div>
+              <div>
+                <dt>怎么看</dt>
+                <dd>
+                  数值高通常代表交易活跃、分歧或短期关注度较高；数值低通常代表交易清淡。
+                  它衡量活跃度，不直接代表上涨、下跌或投资价值。
+                </dd>
+              </div>
+              <div>
+                <dt>项目口径</dt>
+                <dd>展示历史行情中最新可用交易日的换手率，不做多日平均。</dd>
+              </div>
+            </dl>
+          </article>
+
+          <aside class="metric-help-portfolio-note">
+            <span>PORTFOLIO METHOD / 组合口径</span>
+            <p>
+              持仓区域的“加权 PE / PB”按已披露持仓权重做调和汇总：
+              <code>Σ权重 ÷ Σ(权重 ÷ 指标)</code>；“加权 ROE / 股息率”按可用数据做
+              加权算术平均。每项只使用有数据的股票，因此不同指标的覆盖范围可能不同。
+            </p>
+          </aside>
+        </div>
+      </div>
+    </dialog>
+
     <footer class="site-footer">
       <span>FUND LENS / 2026</span>
       <span>PUBLIC DATA · CLEAR VIEW</span>
     </footer>
 
-    <script src="/static/app.js" defer></script>
+    <script src="/static/app.js?v=20260726.22" defer></script>
   </body>
 </html>
