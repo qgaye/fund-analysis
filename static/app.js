@@ -3745,6 +3745,131 @@ metricHelpDialog.addEventListener("click", (event) => {
   if (event.target === metricHelpDialog) metricHelpDialog.close();
 });
 
+const benchmarkHelpDialog = document.querySelector("#benchmark-help-dialog");
+const benchmarkHelpSheet = benchmarkHelpDialog.querySelector(
+  ".metric-help-sheet",
+);
+const benchmarkHelpNav = document.querySelector("#benchmark-help-nav");
+const benchmarkHelpContent = document.querySelector("#benchmark-help-content");
+let benchmarkCatalogPromise = null;
+let benchmarkHelpRendered = false;
+
+function loadBenchmarkCatalog() {
+  if (!benchmarkCatalogPromise) {
+    benchmarkCatalogPromise = fetch("/api/benchmarks")
+      .then((response) => {
+        if (!response.ok) throw new Error("赛道基准目录加载失败");
+        return response.json();
+      })
+      .then((data) => data.基准 || [])
+      .catch((error) => {
+        benchmarkCatalogPromise = null;
+        throw error;
+      });
+  }
+  return benchmarkCatalogPromise;
+}
+
+function renderBenchmarkHelp(catalog) {
+  benchmarkHelpNav.replaceChildren();
+  benchmarkHelpContent.replaceChildren();
+  catalog.forEach((item, index) => {
+    const navButton = document.createElement("button");
+    navButton.type = "button";
+    navButton.dataset.benchmarkHelp = item.key;
+    navButton.textContent = item.简称 || item.名称;
+    navButton.addEventListener("click", () => focusBenchmarkHelp(item.key));
+    benchmarkHelpNav.append(navButton);
+
+    const article = document.createElement("article");
+    article.dataset.benchmarkHelpCard = item.key;
+
+    const header = document.createElement("header");
+    const order = document.createElement("span");
+    const codeLabel = item.指数代码 ? ` / ${item.指数代码}` : "";
+    order.textContent = `${String(index + 1).padStart(2, "0")}${codeLabel}`;
+    const headerBody = document.createElement("div");
+    const title = document.createElement("h3");
+    title.textContent = item.名称;
+    const subtitle = document.createElement("p");
+    subtitle.textContent = item.类型 || item.说明 || "";
+    headerBody.append(title, subtitle);
+    header.append(order, headerBody);
+
+    const list = document.createElement("dl");
+    [
+      ["指数编制", item.编制],
+      ["代表含义", item.代表],
+      ["适用基金", item.适用],
+    ].forEach(([term, detail]) => {
+      if (!detail) return;
+      const cell = document.createElement("div");
+      const dt = document.createElement("dt");
+      dt.textContent = term;
+      const dd = document.createElement("dd");
+      dd.textContent = detail;
+      cell.append(dt, dd);
+      list.append(cell);
+    });
+
+    article.append(header, list);
+    benchmarkHelpContent.append(article);
+  });
+  benchmarkHelpRendered = true;
+}
+
+function focusBenchmarkHelp(key) {
+  const target = benchmarkHelpContent.querySelector(
+    `[data-benchmark-help-card="${key}"]`,
+  );
+  benchmarkHelpContent
+    .querySelectorAll("[data-benchmark-help-card]")
+    .forEach((card) => card.classList.toggle("active", card === target));
+  benchmarkHelpNav
+    .querySelectorAll("[data-benchmark-help]")
+    .forEach((button) => {
+      const active = button.dataset.benchmarkHelp === key;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-current", active ? "true" : "false");
+    });
+  if (target) {
+    requestAnimationFrame(() => {
+      benchmarkHelpSheet.scrollTo({
+        top: Math.max(target.offsetTop - 16, 0),
+        behavior: benchmarkHelpDialog.open ? "smooth" : "auto",
+      });
+    });
+  }
+}
+
+async function openBenchmarkHelp() {
+  try {
+    if (!benchmarkHelpRendered) {
+      renderBenchmarkHelp(await loadBenchmarkCatalog());
+    }
+  } catch (error) {
+    benchmarkHelpContent.replaceChildren();
+    const notice = document.createElement("p");
+    notice.style.padding = "34px 0";
+    notice.textContent = error.message || "赛道基准说明暂不可用。";
+    benchmarkHelpContent.append(notice);
+  }
+  if (!benchmarkHelpDialog.open) benchmarkHelpDialog.showModal();
+  focusBenchmarkHelp(currentTrackBenchmarkKey || "hs300");
+}
+
+document
+  .querySelector("#track-benchmark-help")
+  .addEventListener("click", openBenchmarkHelp);
+
+document
+  .querySelector("#benchmark-help-close")
+  .addEventListener("click", () => benchmarkHelpDialog.close());
+
+benchmarkHelpDialog.addEventListener("click", (event) => {
+  if (event.target === benchmarkHelpDialog) benchmarkHelpDialog.close();
+});
+
 const stockDialog = document.querySelector("#stock-detail-dialog");
 const stockChart = document.querySelector("#stock-price-chart");
 const stockTooltip = document.querySelector("#stock-chart-tooltip");

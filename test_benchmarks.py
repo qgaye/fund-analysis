@@ -30,27 +30,23 @@ class TrackBenchmarkTests(unittest.TestCase):
             "80%沪深300 + 20%中债新综合财富，每日定权复合",
         )
 
-    def test_recommends_credit_benchmark_for_credit_heavy_bond_fund(
+    def test_recommends_mid_long_benchmark_for_long_bond_fund(
         self,
     ) -> None:
         recommendation = recommend_track_benchmark(
-            "示例纯债债券A",
+            "示例中长债债券A",
             "债券型-长债",
-            [
-                {"债券品种": "中期票据", "占净值比例": 60},
-                {"债券品种": "政策性金融债", "占净值比例": 10},
-            ],
         )
 
-        self.assertEqual(recommendation["key"], "cbond_credit")
+        self.assertEqual(recommendation["key"], "cbond_mid_long")
 
-    def test_recommends_short_benchmark_for_short_bond_fund(self) -> None:
+    def test_recommends_mid_short_benchmark_for_short_bond_fund(self) -> None:
         recommendation = recommend_track_benchmark(
             "示例短债A",
             "债券型-短债",
         )
 
-        self.assertEqual(recommendation["key"], "cbond_short")
+        self.assertEqual(recommendation["key"], "cbond_mid_short")
 
     def test_recommends_80_20_for_fixed_income_plus(self) -> None:
         recommendation = recommend_track_benchmark(
@@ -85,10 +81,8 @@ class TrackBenchmarkTests(unittest.TestCase):
             "创业板指数收益率×90%": "chinext",
             "科创50指数收益率": "star50",
             "中证红利指数收益率×80%": "csi_dividend",
-            "中债-新综合财富（1年以下）指数收益率": "cbond_short",
-            "中债-信用债总财富（总值）指数收益率": "cbond_credit",
-            "中债-国债及政策性银行债财富（总值）指数收益率": "cbond_rates",
-            "中债-新综合财富（总值）指数收益率": "cbond_composite",
+            "中债-新综合财富（1-3年）指数收益率": "cbond_mid_short",
+            "中债-新综合财富（5-7年）指数收益率": "cbond_mid_long",
         }
 
         for disclosed, expected in cases.items():
@@ -116,32 +110,50 @@ class TrackBenchmarkTests(unittest.TestCase):
                 recommendation = recommend_track_benchmark(name, fund_type)
                 self.assertEqual(recommendation["key"], expected)
 
-    def test_recommends_rate_benchmark_for_treasury_heavy_bond_fund(
+    def test_recommends_mid_short_benchmark_for_generic_bond_fund(
         self,
     ) -> None:
         recommendation = recommend_track_benchmark(
-            "示例利率债基金",
-            "债券型-长债",
-            [
-                {"债券品种": "国家债券", "占净值比例": 55},
-                {"债券品种": "政策性金融债", "占净值比例": 20},
-                {"债券品种": "中期票据", "占净值比例": 10},
-            ],
+            "示例纯债债券A",
+            "债券型-中长期纯债",
         )
 
-        self.assertEqual(recommendation["key"], "cbond_rates")
+        self.assertEqual(recommendation["key"], "cbond_mid_short")
 
+    @patch("benchmarks.ak.stock_zh_index_daily_tx")
+    def test_equity_history_prefers_tencent_source(
+        self,
+        mocked_tx,
+    ) -> None:
+        recent = date.today().strftime("%Y-%m-%d")
+        mocked_tx.return_value = pd.DataFrame(
+            {
+                "date": ["2026-01-01", recent],
+                "close": [100.0, 101.0],
+            }
+        )
+
+        result = _source_series("hs300")
+
+        self.assertEqual(result.iloc[-1], 101.0)
+        mocked_tx.assert_called_once_with(symbol="sh000300")
+
+    @patch("benchmarks.ak.stock_zh_index_hist_csindex")
     @patch("benchmarks.ak.index_zh_a_hist")
     @patch("benchmarks.ak.stock_zh_index_daily")
     @patch("benchmarks.ak.stock_zh_index_daily_em")
+    @patch("benchmarks.ak.stock_zh_index_daily_tx")
     def test_equity_history_falls_back_to_secondary_source(
         self,
-        mocked_primary,
+        mocked_tx,
+        mocked_em,
         mocked_sina,
         mocked_cn_hist,
+        mocked_csindex,
     ) -> None:
         recent = date.today().strftime("%Y-%m-%d")
-        mocked_primary.side_effect = RuntimeError("primary unavailable")
+        mocked_tx.side_effect = IndexError("list index out of range")
+        mocked_em.side_effect = RuntimeError("primary unavailable")
         mocked_cn_hist.return_value = pd.DataFrame(
             {
                 "日期": ["2026-01-01", recent],
@@ -152,20 +164,28 @@ class TrackBenchmarkTests(unittest.TestCase):
         result = _source_series("hs300")
 
         self.assertEqual(result.iloc[-1], 101.0)
+        mocked_csindex.assert_not_called()
         mocked_sina.assert_not_called()
 
+    @patch("benchmarks.ak.stock_zh_index_hist_csindex")
     @patch("benchmarks.ak.index_zh_a_hist")
     @patch("benchmarks.ak.stock_zh_index_daily")
     @patch("benchmarks.ak.stock_zh_index_daily_em")
-    def test_equity_history_falls_back_to_cn_hist_for_new_index(
+    @patch("benchmarks.ak.stock_zh_index_daily_tx")
+    def test_equity_history_uses_csindex_for_new_index(
         self,
+        mocked_tx,
         mocked_em,
         mocked_sina,
         mocked_cn_hist,
+        mocked_csindex,
     ) -> None:
         recent = date.today().strftime("%Y-%m-%d")
+        # 中证2000 不被腾讯/东财/新浪支持，需由中证官网兜底。
+        mocked_tx.side_effect = IndexError("list index out of range")
         mocked_em.return_value = pd.DataFrame()
-        mocked_cn_hist.return_value = pd.DataFrame(
+        mocked_cn_hist.side_effect = ConnectionError("blocked")
+        mocked_csindex.return_value = pd.DataFrame(
             {
                 "日期": ["2026-01-01", recent],
                 "收盘": [1000.0, 1010.0],
@@ -176,30 +196,34 @@ class TrackBenchmarkTests(unittest.TestCase):
 
         self.assertEqual(result.iloc[-1], 1010.0)
         mocked_sina.assert_not_called()
-        mocked_cn_hist.assert_called_once_with(
+        mocked_csindex.assert_called_once_with(
             symbol="932000",
-            period="daily",
             start_date="19900101",
             end_date=date.today().strftime("%Y%m%d"),
         )
 
+    @patch("benchmarks.ak.stock_zh_index_hist_csindex")
     @patch("benchmarks.ak.index_zh_a_hist")
     @patch("benchmarks.ak.stock_zh_index_daily")
     @patch("benchmarks.ak.stock_zh_index_daily_em")
+    @patch("benchmarks.ak.stock_zh_index_daily_tx")
     def test_equity_history_skips_stale_source_for_fresh_one(
         self,
+        mocked_tx,
         mocked_em,
         mocked_sina,
         mocked_cn_hist,
+        mocked_csindex,
     ) -> None:
         recent = date.today().strftime("%Y-%m-%d")
-        # 主源虽有数据，但停更在数年前，应被跳过并采用新鲜的中证历史源。
-        mocked_em.return_value = pd.DataFrame(
+        # 腾讯源虽有数据，但停更在数年前，应被跳过并采用新鲜的中证历史源。
+        mocked_tx.return_value = pd.DataFrame(
             {
                 "date": ["2018-12-28", "2019-01-30"],
                 "close": [3990.0, 4000.74],
             }
         )
+        mocked_em.return_value = pd.DataFrame()
         mocked_cn_hist.return_value = pd.DataFrame(
             {
                 "日期": ["2026-01-01", recent],
@@ -212,24 +236,34 @@ class TrackBenchmarkTests(unittest.TestCase):
         self.assertEqual(result.iloc[-1], 5434.0)
         mocked_sina.assert_not_called()
 
+    @patch("benchmarks.ak.stock_zh_index_hist_csindex")
     @patch("benchmarks.ak.index_zh_a_hist")
     @patch("benchmarks.ak.stock_zh_index_daily")
     @patch("benchmarks.ak.stock_zh_index_daily_em")
+    @patch("benchmarks.ak.stock_zh_index_daily_tx")
     def test_equity_history_returns_freshest_when_all_stale(
         self,
+        mocked_tx,
         mocked_em,
         mocked_sina,
         mocked_cn_hist,
+        mocked_csindex,
     ) -> None:
         # 所有源都过期时，返回其中最新鲜的一份而非首个命中的。
-        mocked_em.return_value = pd.DataFrame(
+        mocked_tx.return_value = pd.DataFrame(
             {"date": ["2017-01-01"], "close": [3000.0]}
+        )
+        mocked_em.return_value = pd.DataFrame(
+            {"date": ["2016-01-01"], "close": [2800.0]}
         )
         mocked_cn_hist.return_value = pd.DataFrame(
             {"日期": ["2019-01-30"], "收盘": [4000.74]}
         )
+        mocked_csindex.return_value = pd.DataFrame(
+            {"日期": ["2018-06-01"], "收盘": [3500.0]}
+        )
         mocked_sina.return_value = pd.DataFrame(
-            {"date": ["2018-06-01"], "close": [3500.0]}
+            {"date": ["2017-06-01"], "close": [3200.0]}
         )
 
         result = _source_series("csi_dividend")

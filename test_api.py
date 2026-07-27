@@ -35,7 +35,7 @@ class FundApiTests(unittest.IsolatedAsyncioTestCase):
         result = await benchmark_catalog()
         keys = {row["key"] for row in result["基准"]}
         self.assertIn("hs300", keys)
-        self.assertIn("cbond_composite", keys)
+        self.assertIn("cbond_mid_short", keys)
         self.assertIn("equity_bond_80_20", keys)
 
     @patch("app.get_track_benchmark")

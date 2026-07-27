@@ -17,6 +17,10 @@ TRACK_BENCHMARKS: dict[str, dict[str, Any]] = {
         "类型": "股票宽基",
         "source": "equity",
         "symbol": "sh000300",
+        "指数代码": "000300",
+        "编制": "沪深两市规模最大、流动性最好的 300 只龙头股，按自由流通市值加权。",
+        "代表": "A股大盘蓝筹的整体表现，覆盖全市场约六成市值。",
+        "适用": "大盘、价值或均衡风格的主动股票与偏股基金。",
     },
     "csi500": {
         "名称": "中证500",
@@ -24,6 +28,10 @@ TRACK_BENCHMARKS: dict[str, dict[str, Any]] = {
         "类型": "股票宽基",
         "source": "equity",
         "symbol": "sh000905",
+        "指数代码": "000905",
+        "编制": "剔除沪深300成分后，规模排名前 500 的中盘股，按自由流通市值加权。",
+        "代表": "A股中盘股整体表现，成长与周期特征较强。",
+        "适用": "中盘风格、行业相对均衡的成长型基金。",
     },
     "csi800": {
         "名称": "中证800",
@@ -31,6 +39,10 @@ TRACK_BENCHMARKS: dict[str, dict[str, Any]] = {
         "类型": "股票宽基",
         "source": "equity",
         "symbol": "sh000906",
+        "指数代码": "000906",
+        "编制": "沪深300 与中证500 成分合并，共 800 只大中盘股。",
+        "代表": "覆盖大中盘的全市场宽基，兼顾蓝筹与成长。",
+        "适用": "可同时投资大中盘的全市场权益基金。",
     },
     "csi1000": {
         "名称": "中证1000",
@@ -38,6 +50,10 @@ TRACK_BENCHMARKS: dict[str, dict[str, Any]] = {
         "类型": "股票宽基",
         "source": "equity",
         "symbol": "sh000852",
+        "指数代码": "000852",
+        "编制": "剔除沪深300、中证500 后，规模排名前 1000 的小盘股。",
+        "代表": "A股小市值股票整体表现，弹性大、波动高。",
+        "适用": "小盘成长或量化选股风格的基金。",
     },
     "csi2000": {
         "名称": "中证2000",
@@ -45,6 +61,10 @@ TRACK_BENCHMARKS: dict[str, dict[str, Any]] = {
         "类型": "股票宽基",
         "source": "equity",
         "symbol": "sh932000",
+        "指数代码": "932000",
+        "编制": "剔除中证800、中证1000 后，规模靠前的 2000 只微小市值股。",
+        "代表": "A股微盘股整体表现，弹性与波动更极端。",
+        "适用": "微盘、小微盘量化风格的基金。",
     },
     "chinext": {
         "名称": "创业板指",
@@ -52,6 +72,10 @@ TRACK_BENCHMARKS: dict[str, dict[str, Any]] = {
         "类型": "股票宽基",
         "source": "equity",
         "symbol": "sz399006",
+        "指数代码": "399006",
+        "编制": "深交所创业板中市值大、流动性好的 100 只股票。",
+        "代表": "创业板成长股表现，成长与科技属性突出。",
+        "适用": "聚焦创业板、成长赛道的基金。",
     },
     "star50": {
         "名称": "科创50",
@@ -59,6 +83,10 @@ TRACK_BENCHMARKS: dict[str, dict[str, Any]] = {
         "类型": "股票宽基",
         "source": "equity",
         "symbol": "sh000688",
+        "指数代码": "000688",
+        "编制": "科创板中市值大、流动性好的 50 只龙头股。",
+        "代表": "科创板硬科技龙头表现，集中于半导体、生物医药等。",
+        "适用": "科创主题、硬科技赛道的基金。",
     },
     "csi_dividend": {
         "名称": "中证红利",
@@ -66,6 +94,36 @@ TRACK_BENCHMARKS: dict[str, dict[str, Any]] = {
         "类型": "股票宽基",
         "source": "equity",
         "symbol": "sh000922",
+        "指数代码": "000922",
+        "编制": "现金分红稳定、股息率较高的 100 只股票，按股息率加权。",
+        "代表": "高股息价值风格表现，防御性较强。",
+        "适用": "红利、价值、低波风格的基金。",
+    },
+    "cbond_mid_short": {
+        "名称": "中债-新综合财富（1-3年）指数",
+        "简称": "中债中短债财富",
+        "说明": "待偿期1-3年的中短债赛道",
+        "类型": "债券中短久期",
+        "source": "bond",
+        "category": "新综合指数",
+        "period": "1-3年",
+        "指数代码": "中债新综合·1-3年",
+        "编制": "取中债新综合指数中待偿期 1-3 年的债券，财富口径已含票息再投资。",
+        "代表": "中短久期债券的持有回报，利率敏感度中等偏低。",
+        "适用": "中短债、稳健型债券基金。",
+    },
+    "cbond_mid_long": {
+        "名称": "中债-新综合财富（5-7年）指数",
+        "简称": "中债中长债财富",
+        "说明": "待偿期5-7年的中长债赛道",
+        "类型": "债券中长久期",
+        "source": "bond",
+        "category": "新综合指数",
+        "period": "5-7年",
+        "指数代码": "中债新综合·5-7年",
+        "编制": "取中债新综合指数中待偿期 5-7 年的债券，财富口径已含票息再投资。",
+        "代表": "中长久期债券持有回报，利率敏感度较高。",
+        "适用": "中长久期、久期偏长的债券基金。",
     },
     "cbond_composite": {
         "名称": "中债-新综合财富（总值）指数",
@@ -75,37 +133,11 @@ TRACK_BENCHMARKS: dict[str, dict[str, Any]] = {
         "source": "bond",
         "category": "新综合指数",
         "period": "总值",
-    },
-    "cbond_short": {
-        "名称": "中债-新综合财富（1年以下）指数",
-        "简称": "中债短久期财富",
-        "说明": "待偿期1年以下的短久期债券赛道",
-        "类型": "债券短久期",
-        "source": "bond",
-        "category": "新综合指数",
-        "period": "1年以下",
-    },
-    "cbond_credit": {
-        "名称": "中债-信用债总财富（总值）指数",
-        "简称": "中债信用债财富",
-        "说明": "信用债市场整体财富表现",
-        "类型": "信用债",
-        "source": "bond",
-        "category": "信用债总指数",
-        "period": "总值",
-    },
-    "cbond_rates": {
-        "名称": "中债-国债及政策性银行债财富（总值）指数",
-        "简称": "中债利率债财富",
-        "说明": "国债与政策性金融债赛道",
-        "类型": "利率债",
-        "source": "bond",
-        "category": "国债及政策性银行债指数",
-        "period": "总值",
+        "hidden": True,
     },
     "fixed_income_plus_80_20": {
-        "名称": "固收+ 80/20赛道基准",
-        "简称": "固收+ 80/20",
+        "名称": "偏债混合赛道基准",
+        "简称": "偏债混合",
         "说明": "80%中债新综合财富 + 20%沪深300，每日定权复合",
         "类型": "股债组合",
         "source": "composite",
@@ -113,10 +145,13 @@ TRACK_BENCHMARKS: dict[str, dict[str, Any]] = {
             "cbond_composite": 0.8,
             "hs300": 0.2,
         },
+        "编制": "80% 中债新综合财富 + 20% 沪深300，每日按目标权重再平衡复合。",
+        "代表": "以债券打底、少量权益增强的“固收+”组合收益。",
+        "适用": "偏债混合、二级债基、固收+ 类基金。",
     },
     "equity_bond_80_20": {
-        "名称": "沪深300/中债 80/20赛道基准",
-        "简称": "沪深300/中债 80/20",
+        "名称": "偏股混合赛道基准",
+        "简称": "偏股混合",
         "说明": "80%沪深300 + 20%中债新综合财富，每日定权复合",
         "类型": "股债组合",
         "source": "composite",
@@ -124,6 +159,9 @@ TRACK_BENCHMARKS: dict[str, dict[str, Any]] = {
             "hs300": 0.8,
             "cbond_composite": 0.2,
         },
+        "编制": "80% 沪深300 + 20% 中债新综合财富，每日按目标权重再平衡复合。",
+        "代表": "以权益为主、少量债券缓冲的偏股组合收益。",
+        "适用": "偏股混合、灵活配置类基金。",
     },
 }
 
@@ -136,10 +174,8 @@ DISCLOSED_BENCHMARK_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"沪深\s*300", "hs300"),
     (r"中证\s*500", "csi500"),
     (r"中证\s*800", "csi800"),
-    (r"中债.*(?:1\s*年以下|一年以下|短久期|短债)", "cbond_short"),
-    (r"中债.*信用债", "cbond_credit"),
-    (r"中债.*(?:国债.*政策性|政策性.*国债)", "cbond_rates"),
-    (r"中债.*(?:新)?综合.*财富", "cbond_composite"),
+    (r"中债.*(?:1\s*-\s*3\s*年|1\s*到\s*3\s*年|中短债)", "cbond_mid_short"),
+    (r"中债.*(?:5\s*-\s*7\s*年|5\s*到\s*7\s*年|中长债)", "cbond_mid_long"),
 )
 
 
@@ -152,8 +188,13 @@ def track_benchmark_catalog() -> list[dict[str, Any]]:
             "简称": config.get("简称", config["名称"]),
             "说明": config["说明"],
             "类型": config["类型"],
+            "指数代码": config.get("指数代码", ""),
+            "编制": config.get("编制", ""),
+            "代表": config.get("代表", ""),
+            "适用": config.get("适用", ""),
         }
         for key, config in TRACK_BENCHMARKS.items()
+        if not config.get("hidden")
     ]
 
 
@@ -176,23 +217,29 @@ _EQUITY_STALE_DAYS = 30
 
 
 def _equity_series(symbol: str) -> pd.Series:
-    """按东财日线→东财中证历史→新浪日线三级回退取股票指数收盘序列。
+    """按 腾讯→东财日线→东财中证历史→中证官网→新浪 多级回退取指数收盘序列。
 
-    两个考量：
-    1. 部分较新的中证指数（如中证2000）不在东财指数日线与新浪日线两个源中，
-       需要东财中证历史接口（纯数字代码、列名为“日期/收盘”）兜底。
-    2. 新浪日线对红利等部分指数长期停更（数据停在数年前），一旦东财源
-       偶发波动就会拿到过期序列，无法与近期基金净值对齐。因此新浪降为最后
+    多源设计考量：
+    1. 东财接口偶发触发人机验证/限流；腾讯日线独立于东财、代码格式一致，
+       放在首位可在东财不可用时顶上。
+    2. 部分较新的中证指数（如中证2000）不在腾讯与新浪源中，需要东财中证
+       历史或中证官网接口兜底；中证官网为权威源、覆盖最全，放在新浪之前。
+    3. 新浪日线对红利等部分指数长期停更（数据停在数年前），因此降为最后
        兜底，且每级都做新鲜度校验：数据足够新才立即采纳，否则暂存候选、
        继续尝试更优源，全部尝试后返回其中最新鲜的一份。
     """
     numeric_code = re.sub(r"^[a-zA-Z]+", "", symbol)
+    today = date.today().strftime("%Y%m%d")
+
+    def from_tx() -> pd.Series:
+        frame = ak.stock_zh_index_daily_tx(symbol=symbol)
+        return _clean_history(frame, "date", "close")
 
     def from_em() -> pd.Series:
         frame = ak.stock_zh_index_daily_em(
             symbol=symbol,
             start_date="19900101",
-            end_date=date.today().strftime("%Y%m%d"),
+            end_date=today,
         )
         return _clean_history(frame, "date", "close")
 
@@ -201,7 +248,15 @@ def _equity_series(symbol: str) -> pd.Series:
             symbol=numeric_code,
             period="daily",
             start_date="19900101",
-            end_date=date.today().strftime("%Y%m%d"),
+            end_date=today,
+        )
+        return _clean_history(frame, "日期", "收盘")
+
+    def from_csindex() -> pd.Series:
+        frame = ak.stock_zh_index_hist_csindex(
+            symbol=numeric_code,
+            start_date="19900101",
+            end_date=today,
         )
         return _clean_history(frame, "日期", "收盘")
 
@@ -213,7 +268,7 @@ def _equity_series(symbol: str) -> pd.Series:
         days=_EQUITY_STALE_DAYS
     )
     best = pd.Series(dtype=float)
-    for loader in (from_em, from_cn_hist, from_sina):
+    for loader in (from_tx, from_em, from_cn_hist, from_csindex, from_sina):
         try:
             series = loader()
         except Exception:
@@ -314,53 +369,22 @@ def recommend_track_benchmark(
     if any(word in descriptor for word in ("固收+", "偏债混合", "混合二级")):
         return {
             "key": "fixed_income_plus_80_20",
-            "理由": "该基金包含较稳定的债券底仓与权益增强，使用80/20股债组合更能反映固收+赛道。",
+            "理由": "该基金包含较稳定的债券底仓与权益增强，使用偏债混合（80%债/20%股）更能反映其赛道。",
         }
     if "短债" in descriptor or "超短债" in descriptor:
         return {
-            "key": "cbond_short",
-            "理由": "短债基金的利率敏感度较低，使用1年以下债券财富指数更匹配其久期。",
+            "key": "cbond_mid_short",
+            "理由": "短债基金久期偏低，使用中债1-3年中短债财富指数更匹配其久期。",
         }
     if "债" in descriptor:
-        credit_share = 0.0
-        rates_share = 0.0
-        for row in bond_structure or []:
-            name = str(row.get("债券品种") or "")
-            try:
-                weight = float(row.get("占净值比例") or 0)
-            except (TypeError, ValueError):
-                continue
-            if any(
-                word in name
-                for word in ("国债", "国家债券", "央行票据", "政策性", "地方政府债")
-            ):
-                rates_share += weight
-            elif any(
-                word in name
-                for word in (
-                    "企业债",
-                    "公司债",
-                    "中期票据",
-                    "短期融资",
-                    "金融债（不含政策性）",
-                    "同业存单",
-                    "资产支持证券",
-                )
-            ):
-                credit_share += weight
-        if credit_share > rates_share and credit_share > 0:
+        if any(word in descriptor for word in ("长债", "中长债", "长久期")):
             return {
-                "key": "cbond_credit",
-                "理由": "最新披露组合以信用债为主，信用债总财富指数比股票宽基或全市场债券指数更贴近赛道。",
-            }
-        if rates_share > credit_share and rates_share > 0:
-            return {
-                "key": "cbond_rates",
-                "理由": "最新披露组合以国债、政策性金融债等利率债为主，利率债财富指数更贴近赛道。",
+                "key": "cbond_mid_long",
+                "理由": "该基金久期偏长，使用中债5-7年中长债财富指数更贴近赛道。",
             }
         return {
-            "key": "cbond_composite",
-            "理由": "该基金属于债券策略，使用覆盖全市场的中债新综合财富指数作为通用赛道基准。",
+            "key": "cbond_mid_short",
+            "理由": "该基金属于债券策略，默认使用久期适中的中债1-3年中短债财富指数作为赛道基准。",
         }
     if "科创" in descriptor:
         return {
