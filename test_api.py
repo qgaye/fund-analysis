@@ -137,7 +137,7 @@ class FundApiTests(unittest.IsolatedAsyncioTestCase):
         payload = json.loads(response.body)
         self.assertEqual(payload["基础资料"]["名称"], "测试基金")
         self.assertEqual(mocked_lookup.call_count, 2)
-        mocked_lookup.assert_called_with("000001", 20)
+        mocked_lookup.assert_called_with("000001", 20, enrich_stocks=False)
 
     @patch("app.get_fund_holdings_by_period")
     async def test_returns_requested_quarter_holdings(
@@ -209,7 +209,7 @@ class FundApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_rejects_invalid_stock_code(self) -> None:
         with self.assertRaises(HTTPException) as raised:
-            await stock_detail("60051", refresh=False)
+            await stock_detail("6005", refresh=False)
         self.assertEqual(raised.exception.status_code, 422)
 
 

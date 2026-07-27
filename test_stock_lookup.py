@@ -13,8 +13,11 @@ from stock_lookup import (
 class StockLookupTests(unittest.TestCase):
     def test_normalize_stock_code(self) -> None:
         self.assertEqual(_normalize_stock_code("600519"), "600519")
+        self.assertEqual(_normalize_stock_code("03328"), "03328")
         with self.assertRaises(ValueError):
-            _normalize_stock_code("60051")
+            _normalize_stock_code("6005")
+        with self.assertRaises(ValueError):
+            _normalize_stock_code("AAPL")
 
     @patch("stock_lookup.ak.stock_zh_a_hist")
     def test_stock_price_history_returns_close_curve(

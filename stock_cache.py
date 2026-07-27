@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
-_STOCK_CODE = re.compile(r"\d{6}")
+_STOCK_CODE = re.compile(r"\d{5,6}")
 
 
 class StockFileCache:
@@ -126,7 +126,7 @@ class StockFileCache:
 
     def _path(self, stock_code: str) -> Path:
         if _STOCK_CODE.fullmatch(stock_code) is None:
-            raise ValueError("股票代码必须是 6 位数字。")
+            raise ValueError("股票代码必须是 6 位数字（A 股）或 5 位数字（港股）。")
         return self.directory / f"{stock_code}.json"
 
     def _write_record(

@@ -12,7 +12,7 @@
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%23f1eddf' stroke='%23151916' stroke-width='3'/%3E%3Ctext x='32' y='38' text-anchor='middle' font-family='serif' font-size='18' font-weight='700' fill='%23151916'%3EFL%3C/text%3E%3C/svg%3E"
     />
-    <link rel="stylesheet" href="/static/styles.css?v=20260726.22" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260727.2" />
   </head>
   <body>
     <div class="paper-noise" aria-hidden="true"></div>
@@ -32,16 +32,6 @@
 
     <main>
       <section class="hero" id="search-section">
-        <div class="hero-index" aria-hidden="true">01</div>
-        <div class="hero-copy">
-          <p class="eyebrow">PUBLIC FUND RESEARCH TERMINAL</p>
-          <h1>一个代码，<br />看清一只基金。</h1>
-          <p class="hero-description">
-            汇集基础档案、最新净值、阶段收益与季度持仓。
-            数据来自 AKShare 聚合的公开信息。
-          </p>
-        </div>
-
         <div class="search-panel">
           <form id="fund-form" novalidate>
             <label for="fund-code">基金代码</label>
@@ -64,15 +54,30 @@
                 </svg>
               </button>
             </div>
-            <p id="input-help" class="input-help">
-              输入完整的六位基金代码
-            </p>
+            <p id="input-help" class="input-help">输入完整的六位基金代码</p>
           </form>
-          <div class="quick-search" aria-label="示例基金">
-            <span>快速查看</span>
-            <button type="button" data-code="000001">000001</button>
-            <button type="button" data-code="510300">510300</button>
-            <button type="button" data-code="159915">159915</button>
+        </div>
+
+        <div id="search-history" class="search-history" aria-label="查询历史">
+          <div class="search-history-head">
+            <span>查询历史</span>
+            <button type="button" id="search-history-clear">清空</button>
+          </div>
+          <div id="search-history-list" class="search-history-list"></div>
+          <div id="search-history-empty" class="search-history-empty">
+            <p class="eyebrow">HOW TO USE / 使用说明</p>
+            <p class="search-history-empty-lead">
+              在左侧输入六位基金代码即可查询。查询过的基金会自动记录在这里，方便下次快速回看。
+            </p>
+            <ul>
+              <li><strong>基础档案</strong>：基金类型、成立信息、管理人与费率结构。</li>
+              <li><strong>净值与收益</strong>：业绩走势、回撤修复、阶段与周期涨幅、分红记录。</li>
+              <li><strong>季度持仓</strong>：资产分布、证券与行业矩阵、持仓明细与个股估值。</li>
+              <li><strong>模拟持有</strong>：单次买入或定期投入的收益测算。</li>
+            </ul>
+            <p class="search-history-empty-tip">
+              历史记录保存在本地 Cookie 中，最多保留 12 条，点击任意记录即可再次查询。
+            </p>
           </div>
         </div>
       </section>
@@ -118,6 +123,12 @@
             </div>
           </div>
           <div class="fund-refresh-control">
+            <button id="copy-ai-button" class="refresh-button" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M9 9h10v12H9zM5 15H3V3h12v2" />
+              </svg>
+              <span>复制给 AI</span>
+            </button>
             <button id="refresh-button" class="refresh-button" type="button">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7" />
@@ -128,11 +139,11 @@
           </div>
         </header>
 
-        <details class="fund-profile-section compact-profile" aria-labelledby="fund-profile-title">
+        <details class="fund-profile-section compact-profile" aria-labelledby="fund-profile-title" open>
           <summary class="compact-profile-summary">
             <div>
               <p class="eyebrow">FULL PROFILE / FEES / OWNERSHIP</p>
-              <h2 id="fund-profile-title">完整基金档案</h2>
+              <h2 id="fund-profile-title">基金档案</h2>
             </div>
             <div class="compact-profile-summary-metrics">
               <span>成立 <strong id="profile-summary-age">—</strong></span>
@@ -170,33 +181,33 @@
                   <dd id="founded-scale">—</dd>
                 </div>
               </dl>
-            </article>
 
-            <article class="profile-card holder-card">
-              <div class="profile-card-heading">
-                <span class="section-label">HOLDER STRUCTURE</span>
-                <span id="holder-period">—</span>
-              </div>
-              <div
-                id="holder-bar"
-                class="holder-bar"
-                role="img"
-                aria-label="基金个人和机构持有比例"
-              >
-                <i id="institution-bar"></i>
-                <i id="individual-bar"></i>
-              </div>
-              <div class="holder-values">
-                <div>
-                  <span><i></i>机构持有</span>
-                  <strong id="institution-share">—</strong>
+              <div class="holder-block">
+                <div class="profile-card-heading">
+                  <span class="section-label">HOLDER STRUCTURE</span>
+                  <span id="holder-period">—</span>
                 </div>
-                <div>
-                  <span><i></i>个人持有</span>
-                  <strong id="individual-share">—</strong>
+                <div
+                  id="holder-bar"
+                  class="holder-bar"
+                  role="img"
+                  aria-label="基金个人和机构持有比例"
+                >
+                  <i id="institution-bar"></i>
+                  <i id="individual-bar"></i>
                 </div>
+                <div class="holder-values">
+                  <div>
+                    <span><i></i>机构持有</span>
+                    <strong id="institution-share">—</strong>
+                  </div>
+                  <div>
+                    <span><i></i>个人持有</span>
+                    <strong id="individual-share">—</strong>
+                  </div>
+                </div>
+                <p id="holder-note" class="profile-note">—</p>
               </div>
-              <p id="holder-note" class="profile-note">—</p>
             </article>
 
             <article class="profile-card fee-card">
@@ -205,11 +216,18 @@
                 <span id="purchase-fee-method">—</span>
               </div>
               <div class="profile-lead fee-lead">
-                <span id="purchase-fee-lead-label">最低金额档买入费率</span>
+                <span id="purchase-fee-lead-label">买入费率</span>
                 <strong id="purchase-fee-lead">—</strong>
               </div>
-              <div id="purchase-fee-list" class="purchase-fee-list"></div>
               <p id="purchase-fee-note" class="profile-note">—</p>
+              <div class="fee-redeem-block">
+                <div class="profile-card-heading">
+                  <span class="section-label">REDEEM FEE</span>
+                  <span>按持有期限</span>
+                </div>
+                <div id="redeem-fee-list" class="purchase-fee-list"></div>
+                <p id="redeem-fee-note" class="profile-note">—</p>
+              </div>
             </article>
           </div>
 
@@ -312,6 +330,11 @@
                       <option value="hs300">沪深300</option>
                       <option value="csi500">中证500</option>
                       <option value="csi800">中证800</option>
+                      <option value="csi1000">中证1000</option>
+                      <option value="csi2000">中证2000</option>
+                      <option value="chinext">创业板指</option>
+                      <option value="star50">科创50</option>
+                      <option value="csi_dividend">中证红利</option>
                     </optgroup>
                     <optgroup label="债券赛道">
                       <option value="cbond_composite">中债新综合财富</option>
@@ -476,21 +499,10 @@
             aria-label="阶段涨幅"
             hidden
           >
-            <div id="stage-peer-context" class="stage-peer-context" hidden>
-              <div>
-                <span>COMPARISON UNIVERSE</span>
-                <strong>同类口径</strong>
-              </div>
-              <strong id="stage-peer-type">—</strong>
-              <p id="stage-peer-note">同类由下游数据源按基金类型划分。</p>
-            </div>
             <div class="stage-performance-scroll">
               <div class="stage-performance-list-heading">
                 <span>阶段</span>
                 <span>基金涨幅</span>
-                <span>同类平均</span>
-                <span>相对同类</span>
-                <span>同类排名</span>
                 <span id="stage-benchmark-heading">赛道涨幅</span>
                 <span>相对赛道</span>
               </div>
@@ -1356,6 +1368,6 @@
       <span>PUBLIC DATA · CLEAR VIEW</span>
     </footer>
 
-    <script src="/static/app.js?v=20260726.22" defer></script>
+    <script src="/static/app.js?v=20260727.2" defer></script>
   </body>
 </html>

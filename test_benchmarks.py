@@ -1,4 +1,5 @@
 import unittest
+from datetime import date
 from unittest.mock import patch
 
 import pandas as pd
@@ -19,6 +20,11 @@ class TrackBenchmarkTests(unittest.TestCase):
         self.assertEqual(catalog["hs300"]["名称"], "沪深300")
         self.assertEqual(catalog["csi500"]["名称"], "中证500")
         self.assertEqual(catalog["csi800"]["名称"], "中证800")
+        self.assertEqual(catalog["csi1000"]["名称"], "中证1000")
+        self.assertEqual(catalog["csi2000"]["名称"], "中证2000")
+        self.assertEqual(catalog["chinext"]["名称"], "创业板指")
+        self.assertEqual(catalog["star50"]["名称"], "科创50")
+        self.assertEqual(catalog["csi_dividend"]["名称"], "中证红利")
         self.assertEqual(
             catalog["equity_bond_80_20"]["说明"],
             "80%沪深300 + 20%中债新综合财富，每日定权复合",
@@ -74,6 +80,11 @@ class TrackBenchmarkTests(unittest.TestCase):
         cases = {
             "中证500指数收益率×90%": "csi500",
             "中证 800 指数收益率": "csi800",
+            "中证1000指数收益率×95%": "csi1000",
+            "中证2000指数收益率": "csi2000",
+            "创业板指数收益率×90%": "chinext",
+            "科创50指数收益率": "star50",
+            "中证红利指数收益率×80%": "csi_dividend",
             "中债-新综合财富（1年以下）指数收益率": "cbond_short",
             "中债-信用债总财富（总值）指数收益率": "cbond_credit",
             "中债-国债及政策性银行债财富（总值）指数收益率": "cbond_rates",
@@ -89,25 +100,141 @@ class TrackBenchmarkTests(unittest.TestCase):
                 )
                 self.assertEqual(recommendation["key"], expected)
 
+    def test_recommends_style_benchmarks_by_fund_descriptor(self) -> None:
+        cases = {
+            ("示例科创板50ETF", "股票型"): "star50",
+            ("示例创业板成长", "股票型"): "chinext",
+            ("示例红利低波", "股票型"): "csi_dividend",
+            ("示例中证2000指数", "指数型"): "csi2000",
+            ("示例小盘精选", "股票型"): "csi1000",
+            ("示例中小盘混合", "混合型"): "csi500",
+            ("示例价值蓝筹", "混合型"): "csi_dividend",
+        }
+
+        for (name, fund_type), expected in cases.items():
+            with self.subTest(name=name):
+                recommendation = recommend_track_benchmark(name, fund_type)
+                self.assertEqual(recommendation["key"], expected)
+
+    def test_recommends_rate_benchmark_for_treasury_heavy_bond_fund(
+        self,
+    ) -> None:
+        recommendation = recommend_track_benchmark(
+            "示例利率债基金",
+            "债券型-长债",
+            [
+                {"债券品种": "国家债券", "占净值比例": 55},
+                {"债券品种": "政策性金融债", "占净值比例": 20},
+                {"债券品种": "中期票据", "占净值比例": 10},
+            ],
+        )
+
+        self.assertEqual(recommendation["key"], "cbond_rates")
+
+    @patch("benchmarks.ak.index_zh_a_hist")
     @patch("benchmarks.ak.stock_zh_index_daily")
     @patch("benchmarks.ak.stock_zh_index_daily_em")
     def test_equity_history_falls_back_to_secondary_source(
         self,
         mocked_primary,
-        mocked_fallback,
+        mocked_sina,
+        mocked_cn_hist,
     ) -> None:
+        recent = date.today().strftime("%Y-%m-%d")
         mocked_primary.side_effect = RuntimeError("primary unavailable")
-        mocked_fallback.return_value = pd.DataFrame(
+        mocked_cn_hist.return_value = pd.DataFrame(
             {
-                "date": ["2026-01-01", "2026-01-02"],
-                "close": [100.0, 101.0],
+                "日期": ["2026-01-01", recent],
+                "收盘": [100.0, 101.0],
             }
         )
 
         result = _source_series("hs300")
 
         self.assertEqual(result.iloc[-1], 101.0)
-        mocked_fallback.assert_called_once_with(symbol="sh000300")
+        mocked_sina.assert_not_called()
+
+    @patch("benchmarks.ak.index_zh_a_hist")
+    @patch("benchmarks.ak.stock_zh_index_daily")
+    @patch("benchmarks.ak.stock_zh_index_daily_em")
+    def test_equity_history_falls_back_to_cn_hist_for_new_index(
+        self,
+        mocked_em,
+        mocked_sina,
+        mocked_cn_hist,
+    ) -> None:
+        recent = date.today().strftime("%Y-%m-%d")
+        mocked_em.return_value = pd.DataFrame()
+        mocked_cn_hist.return_value = pd.DataFrame(
+            {
+                "日期": ["2026-01-01", recent],
+                "收盘": [1000.0, 1010.0],
+            }
+        )
+
+        result = _source_series("csi2000")
+
+        self.assertEqual(result.iloc[-1], 1010.0)
+        mocked_sina.assert_not_called()
+        mocked_cn_hist.assert_called_once_with(
+            symbol="932000",
+            period="daily",
+            start_date="19900101",
+            end_date=date.today().strftime("%Y%m%d"),
+        )
+
+    @patch("benchmarks.ak.index_zh_a_hist")
+    @patch("benchmarks.ak.stock_zh_index_daily")
+    @patch("benchmarks.ak.stock_zh_index_daily_em")
+    def test_equity_history_skips_stale_source_for_fresh_one(
+        self,
+        mocked_em,
+        mocked_sina,
+        mocked_cn_hist,
+    ) -> None:
+        recent = date.today().strftime("%Y-%m-%d")
+        # 主源虽有数据，但停更在数年前，应被跳过并采用新鲜的中证历史源。
+        mocked_em.return_value = pd.DataFrame(
+            {
+                "date": ["2018-12-28", "2019-01-30"],
+                "close": [3990.0, 4000.74],
+            }
+        )
+        mocked_cn_hist.return_value = pd.DataFrame(
+            {
+                "日期": ["2026-01-01", recent],
+                "收盘": [5400.0, 5434.0],
+            }
+        )
+
+        result = _source_series("csi_dividend")
+
+        self.assertEqual(result.iloc[-1], 5434.0)
+        mocked_sina.assert_not_called()
+
+    @patch("benchmarks.ak.index_zh_a_hist")
+    @patch("benchmarks.ak.stock_zh_index_daily")
+    @patch("benchmarks.ak.stock_zh_index_daily_em")
+    def test_equity_history_returns_freshest_when_all_stale(
+        self,
+        mocked_em,
+        mocked_sina,
+        mocked_cn_hist,
+    ) -> None:
+        # 所有源都过期时，返回其中最新鲜的一份而非首个命中的。
+        mocked_em.return_value = pd.DataFrame(
+            {"date": ["2017-01-01"], "close": [3000.0]}
+        )
+        mocked_cn_hist.return_value = pd.DataFrame(
+            {"日期": ["2019-01-30"], "收盘": [4000.74]}
+        )
+        mocked_sina.return_value = pd.DataFrame(
+            {"date": ["2018-06-01"], "close": [3500.0]}
+        )
+
+        result = _source_series("csi_dividend")
+
+        self.assertEqual(result.iloc[-1], 4000.74)
 
     @patch("benchmarks._source_series")
     def test_composite_series_uses_daily_fixed_weights(

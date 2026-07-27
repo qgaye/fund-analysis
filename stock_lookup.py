@@ -1,7 +1,8 @@
-"""查询 A 股基础资料、估值指标与前复权收盘价历史。"""
+"""查询 A 股与港股基础资料、估值指标与前复权收盘价历史。"""
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from typing import Any
 
@@ -11,9 +12,11 @@ import pandas as pd
 from fund_lookup import (
     _clean,
     _finite_float,
+    _is_hk_stock,
     _item_value_map,
     _load_stock_fundamentals,
     _load_stock_quotes,
+    _stock_market_type,
 )
 
 
@@ -23,12 +26,14 @@ class StockLookupError(RuntimeError):
 
 def _normalize_stock_code(stock_code: str) -> str:
     code = str(stock_code).strip()
-    if len(code) != 6 or not code.isdigit():
-        raise ValueError("股票代码必须是 6 位数字，例如 600519。")
-    return code
+    if re.fullmatch(r"\d{6}", code) or re.fullmatch(r"\d{5}", code):
+        return code
+    raise ValueError("股票代码必须是 6 位数字（A 股）或 5 位数字（港股），例如 600519、03328。")
 
 
 def _stock_market(code: str) -> str:
+    if _is_hk_stock(code):
+        return "香港交易所"
     if code.startswith(("4", "8", "92")):
         return "北京证券交易所"
     if code.startswith(("5", "6", "9")):
@@ -57,29 +62,37 @@ def _stock_price_history(
     end_date = date.today().strftime("%Y%m%d")
     fallback_note = None
     source = "eastmoney"
-    try:
-        frame = ak.stock_zh_a_hist(
-            symbol=code,
-            period="daily",
-            start_date=start_date,
-            end_date=end_date,
-            adjust="qfq",
-        )
-        if frame is None or frame.empty:
-            raise ValueError("东方财富历史行情为空")
-    except Exception:
-        source = "tencent"
-        market_prefix = "bj" if code.startswith(("4", "8", "92")) else (
-            "sh" if code.startswith(("5", "6", "9")) else "sz"
-        )
-        frame = ak.stock_zh_a_hist_tx(
-            symbol=f"{market_prefix}{code}",
-            start_date=start_date,
-            end_date=end_date,
-            adjust="qfq",
-            timeout=10,
-        )
-        fallback_note = "东方财富历史行情不可用，已切换腾讯证券备用源。"
+    if _is_hk_stock(code):
+        source = "sina_hk"
+        try:
+            frame = ak.stock_hk_daily(symbol=code, adjust="qfq")
+        except Exception:
+            frame = ak.stock_hk_daily(symbol=code, adjust="")
+            fallback_note = "港股前复权行情不可用，已切换未复权价格。"
+    else:
+        try:
+            frame = ak.stock_zh_a_hist(
+                symbol=code,
+                period="daily",
+                start_date=start_date,
+                end_date=end_date,
+                adjust="qfq",
+            )
+            if frame is None or frame.empty:
+                raise ValueError("东方财富历史行情为空")
+        except Exception:
+            source = "tencent"
+            market_prefix = "bj" if code.startswith(("4", "8", "92")) else (
+                "sh" if code.startswith(("5", "6", "9")) else "sz"
+            )
+            frame = ak.stock_zh_a_hist_tx(
+                symbol=f"{market_prefix}{code}",
+                start_date=start_date,
+                end_date=end_date,
+                adjust="qfq",
+                timeout=10,
+            )
+            fallback_note = "东方财富历史行情不可用，已切换腾讯证券备用源。"
     if frame is None or frame.empty:
         return [], "未取得该股票的历史收盘价。"
     date_column = "日期" if "日期" in frame.columns else "date"
@@ -128,14 +141,20 @@ def _stock_price_history(
 
 
 def get_stock_data(stock_code: str) -> dict[str, Any]:
-    """返回一只 A 股的资料、当前指标和完整收盘价趋势。"""
+    """返回一只 A 股或港股的资料、当前指标和完整收盘价趋势。"""
     code = _normalize_stock_code(stock_code)
+    is_hk = _is_hk_stock(code)
     warnings: list[str] = []
 
     info: dict[str, Any] = {}
     try:
-        info_frame = ak.stock_individual_info_em(symbol=code, timeout=10)
-        info = _item_value_map(info_frame)
+        if is_hk:
+            profile = ak.stock_hk_security_profile_em(symbol=code)
+            if profile is not None and not profile.empty:
+                info = profile.iloc[0].to_dict()
+        else:
+            info_frame = ak.stock_individual_info_em(symbol=code, timeout=10)
+            info = _item_value_map(info_frame)
     except Exception:
         warnings.append("股票基础资料暂不可用，已展示其他公开数据。")
 
@@ -179,6 +198,9 @@ def get_stock_data(stock_code: str) -> dict[str, Any]:
         or quotes.get(code, {}).get("名称")
     )
     industry = metrics.get("所属行业") or info.get("行业")
+    currency = metrics.get("货币") or quotes.get(code, {}).get("货币") or (
+        "HKD" if is_hk else "CNY"
+    )
     if not name and not history and not metrics.get("估值可用"):
         details = "；".join(warnings[-3:]) or "上游未返回数据"
         raise StockLookupError(f"未找到股票 {code}：{details}")
@@ -214,6 +236,8 @@ def get_stock_data(stock_code: str) -> dict[str, Any]:
             "代码": code,
             "行业": _clean(industry),
             "市场": _stock_market(code),
+            "市场类型": _stock_market_type(code),
+            "货币": currency,
             "上市日期": listed_date,
         },
         "行情": {
@@ -233,7 +257,9 @@ def get_stock_data(stock_code: str) -> dict[str, Any]:
             **fundamental_values,
             "说明": (
                 "PE 为 TTM、PB 为 MRQ；ROE 按 PB÷PE 推算；"
-                "股息率按近 12 个月已除息现金分红÷最新价计算；"
+                "港股 PE/PB 取自百度股市通，暂不提供港股换手率；"
+                "股息率按近 12 个月已除息现金分红÷最新价计算"
+                "（港股取每股港币派息额）；"
                 "换手率为最新可用交易日数据。"
             ),
         },
@@ -244,15 +270,26 @@ def get_stock_data(stock_code: str) -> dict[str, Any]:
             "数量": len(history),
             "明细": history,
         },
-        "数据来源": [
-            "AKShare.stock_individual_info_em（东方财富）",
-            "AKShare.stock_profile_cninfo（巨潮资讯，行业）",
-            "AKShare.stock_zh_valuation_comparison_em（东方财富估值）",
-            "AKShare.stock_history_dividend_detail（现金分红）",
-            "AKShare.stock_zh_a_hist（东方财富前复权日线）",
-            "AKShare.stock_zh_a_hist_tx（腾讯证券备用日线）",
-            "新浪财经批量行情",
-        ],
+        "数据来源": (
+            [
+                "AKShare.stock_hk_security_profile_em（东方财富港股资料）",
+                "AKShare.stock_hk_company_profile_em（东方财富港股行业）",
+                "AKShare.stock_hk_valuation_baidu（百度股市通估值）",
+                "AKShare.stock_hk_dividend_payout_em（东方财富港股分红派息）",
+                "AKShare.stock_hk_daily（新浪港股前复权日线）",
+                "新浪财经批量行情",
+            ]
+            if is_hk
+            else [
+                "AKShare.stock_individual_info_em（东方财富）",
+                "AKShare.stock_profile_cninfo（巨潮资讯，行业）",
+                "AKShare.stock_zh_valuation_comparison_em（东方财富估值）",
+                "AKShare.stock_history_dividend_detail（现金分红）",
+                "AKShare.stock_zh_a_hist（东方财富前复权日线）",
+                "AKShare.stock_zh_a_hist_tx（腾讯证券备用日线）",
+                "新浪财经批量行情",
+            ]
+        ),
         "查询时间": datetime.now().astimezone().isoformat(timespec="seconds"),
         "提示": warnings,
     }

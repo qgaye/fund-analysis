@@ -6,7 +6,6 @@ import pandas as pd
 
 from fund_lookup import (
     _bond_credit_structure,
-    _build_peer_performance,
     _clean,
     _dividend_history,
     _enrich_stock_holdings,
@@ -27,6 +26,7 @@ from fund_lookup import (
     _parse_target_fund_holdings,
     _parse_holder_structure,
     _parse_purchase_fee_table,
+    _parse_redeem_fee_table,
     _pick,
     _report_period,
     _quarter_end_from_period,
@@ -50,7 +50,7 @@ class FundLookupTests(unittest.TestCase):
         self.assertEqual(_clean(date(2026, 7, 25)), "2026-07-25")
 
     @patch("fund_lookup.requests.get")
-    def test_load_return_comparison_keeps_peer_average(self, mocked_get) -> None:
+    def test_load_return_comparison_returns_fund_series(self, mocked_get) -> None:
         response = Mock()
         response.raise_for_status.return_value = None
         response.json.return_value = {
@@ -76,44 +76,8 @@ class FundLookupTests(unittest.TestCase):
 
         frame = _load_return_comparison_em("000001", "1年")
 
-        self.assertEqual(list(frame.columns), ["日期", "累计收益率", "同类平均"])
+        self.assertEqual(list(frame.columns), ["日期", "累计收益率"])
         self.assertEqual(frame.iloc[-1]["累计收益率"], 12.0)
-        self.assertEqual(frame.iloc[-1]["同类平均"], 10.0)
-
-    def test_build_peer_performance_parses_rank_and_relative_ratio(self) -> None:
-        achievement = pd.DataFrame(
-            [
-                {
-                    "周期": "近1年",
-                    "周期收益同类排名": "5/100",
-                }
-            ]
-        )
-        comparison = _build_peer_performance(
-            "股票型-标准指数",
-            achievement,
-            {
-                "1y": pd.DataFrame(
-                    [
-                        {
-                            "日期": date(2026, 7, 24),
-                            "累计收益率": 12.0,
-                            "同类平均": 10.0,
-                        }
-                    ]
-                )
-            },
-            {"近1年": 12.0},
-        )
-
-        row = comparison["阶段"]["近1年"]
-        self.assertEqual(comparison["同类"], "股票型-标准指数")
-        self.assertEqual(row["同类平均"], 10.0)
-        self.assertEqual(row["相对同类差异比例"], 20.0)
-        self.assertEqual(row["超额收益"], 2.0)
-        self.assertEqual(row["排名"], 5)
-        self.assertEqual(row["同类数量"], 100)
-        self.assertEqual(row["排名分位"], 5.0)
 
     def test_fund_age_uses_complete_months(self) -> None:
         self.assertEqual(
@@ -168,6 +132,23 @@ class FundLookupTests(unittest.TestCase):
         self.assertEqual(fees["明细"][0]["原费率"], "1.00%")
         self.assertEqual(fees["明细"][0]["天天基金优惠费率"], "0.10%")
         self.assertEqual(fees["明细"][1]["原费率"], "每笔1000元")
+
+    def test_parse_redeem_fee_table_by_holding_period(self) -> None:
+        frame = pd.DataFrame(
+            [
+                {"适用期限": "小于7天", "赎回费率": "1.50%"},
+                {"适用期限": "大于等于7天，小于等于29天", "赎回费率": "0.75%"},
+                {"适用期限": "大于等于730天", "赎回费率": "0.00%"},
+            ]
+        )
+
+        fees = _parse_redeem_fee_table(frame)
+
+        self.assertTrue(fees["可用"])
+        self.assertEqual(len(fees["明细"]), 3)
+        self.assertEqual(fees["明细"][0]["适用条件"], "小于7天")
+        self.assertEqual(fees["明细"][0]["赎回费率"], "1.50%")
+        self.assertEqual(fees["明细"][2]["赎回费率"], "0.00%")
 
     def test_latest_holdings_selects_latest_quarter_and_reranks(self) -> None:
         frame = pd.DataFrame(
@@ -555,6 +536,26 @@ class FundLookupTests(unittest.TestCase):
         self.assertEqual(allocation[0], {"资产类别": "股票", "占比": 99.45})
         self.assertEqual(allocation[2], {"资产类别": "基金", "占比": 0.0})
         self.assertEqual(allocation[3], {"资产类别": "其他", "占比": 0.55})
+
+    def test_parse_asset_allocation_skips_table_of_contents(self) -> None:
+        report_text = """
+        目录
+        5.1 报告期末基金资产组合情况 ............................ 9
+        5.2 报告期末按行业分类的股票投资组合 ............ 9
+        正文
+        5.1 报告期末基金资产组合情况
+        1 权益投资 - -
+        2 基金投资 - -
+        3 固定收益投资 1,617,847,474.20 99.85
+        7 银行存款和结算备付金合计 2,364,134.23 0.15
+        9 合计 1,620,219,708.07 100.00
+        5.2 报告期末按行业分类的股票投资组合
+        """
+
+        allocation = _parse_asset_allocation_report(report_text)
+
+        self.assertEqual(allocation[1], {"资产类别": "债券", "占比": 99.85})
+        self.assertEqual(allocation[3], {"资产类别": "其他", "占比": 0.15})
 
     def test_parse_target_fund_holding(self) -> None:
         report_text = """

@@ -32,6 +32,41 @@ TRACK_BENCHMARKS: dict[str, dict[str, Any]] = {
         "source": "equity",
         "symbol": "sh000906",
     },
+    "csi1000": {
+        "名称": "中证1000",
+        "说明": "沪深两市小市值宽基",
+        "类型": "股票宽基",
+        "source": "equity",
+        "symbol": "sh000852",
+    },
+    "csi2000": {
+        "名称": "中证2000",
+        "说明": "沪深两市微小市值宽基",
+        "类型": "股票宽基",
+        "source": "equity",
+        "symbol": "sh932000",
+    },
+    "chinext": {
+        "名称": "创业板指",
+        "说明": "深市创业板成长风格代表宽基",
+        "类型": "股票宽基",
+        "source": "equity",
+        "symbol": "sz399006",
+    },
+    "star50": {
+        "名称": "科创50",
+        "说明": "科创板硬科技龙头宽基",
+        "类型": "股票宽基",
+        "source": "equity",
+        "symbol": "sh000688",
+    },
+    "csi_dividend": {
+        "名称": "中证红利",
+        "说明": "高股息价值风格代表指数",
+        "类型": "股票宽基",
+        "source": "equity",
+        "symbol": "sh000922",
+    },
     "cbond_composite": {
         "名称": "中债-新综合财富（总值）指数",
         "简称": "中债新综合财富",
@@ -93,6 +128,11 @@ TRACK_BENCHMARKS: dict[str, dict[str, Any]] = {
 }
 
 DISCLOSED_BENCHMARK_PATTERNS: tuple[tuple[str, str], ...] = (
+    (r"科创\s*50", "star50"),
+    (r"创业板", "chinext"),
+    (r"中证\s*红利", "csi_dividend"),
+    (r"中证\s*2000", "csi2000"),
+    (r"中证\s*1000", "csi1000"),
     (r"沪深\s*300", "hs300"),
     (r"中证\s*500", "csi500"),
     (r"中证\s*800", "csi800"),
@@ -132,20 +172,67 @@ def _clean_history(
     return series.astype(float)
 
 
+_EQUITY_STALE_DAYS = 30
+
+
+def _equity_series(symbol: str) -> pd.Series:
+    """按东财日线→东财中证历史→新浪日线三级回退取股票指数收盘序列。
+
+    两个考量：
+    1. 部分较新的中证指数（如中证2000）不在东财指数日线与新浪日线两个源中，
+       需要东财中证历史接口（纯数字代码、列名为“日期/收盘”）兜底。
+    2. 新浪日线对红利等部分指数长期停更（数据停在数年前），一旦东财源
+       偶发波动就会拿到过期序列，无法与近期基金净值对齐。因此新浪降为最后
+       兜底，且每级都做新鲜度校验：数据足够新才立即采纳，否则暂存候选、
+       继续尝试更优源，全部尝试后返回其中最新鲜的一份。
+    """
+    numeric_code = re.sub(r"^[a-zA-Z]+", "", symbol)
+
+    def from_em() -> pd.Series:
+        frame = ak.stock_zh_index_daily_em(
+            symbol=symbol,
+            start_date="19900101",
+            end_date=date.today().strftime("%Y%m%d"),
+        )
+        return _clean_history(frame, "date", "close")
+
+    def from_cn_hist() -> pd.Series:
+        frame = ak.index_zh_a_hist(
+            symbol=numeric_code,
+            period="daily",
+            start_date="19900101",
+            end_date=date.today().strftime("%Y%m%d"),
+        )
+        return _clean_history(frame, "日期", "收盘")
+
+    def from_sina() -> pd.Series:
+        frame = ak.stock_zh_index_daily(symbol=symbol)
+        return _clean_history(frame, "date", "close")
+
+    freshness_cutoff = pd.Timestamp(date.today()) - pd.Timedelta(
+        days=_EQUITY_STALE_DAYS
+    )
+    best = pd.Series(dtype=float)
+    for loader in (from_em, from_cn_hist, from_sina):
+        try:
+            series = loader()
+        except Exception:
+            continue
+        if series.empty:
+            continue
+        if series.index.max() >= freshness_cutoff:
+            return series
+        # 数据过期，暂存最新鲜的候选，继续尝试更可靠的源。
+        if best.empty or series.index.max() > best.index.max():
+            best = series
+    return best
+
+
 def _source_series(key: str) -> pd.Series:
     config = TRACK_BENCHMARKS[key]
     source = config["source"]
     if source == "equity":
-        try:
-            frame = ak.stock_zh_index_daily_em(
-                symbol=config["symbol"],
-                start_date="19900101",
-                end_date=date.today().strftime("%Y%m%d"),
-            )
-        except Exception:
-            # 东财历史接口偶有连接波动，新浪日线作为同代码备用源。
-            frame = ak.stock_zh_index_daily(symbol=config["symbol"])
-        return _clean_history(frame, "date", "close")
+        return _equity_series(config["symbol"])
     if source == "bond":
         frame = ak.bond_index_general_cbond(
             index_category=config["category"],
@@ -243,7 +330,10 @@ def recommend_track_benchmark(
                 weight = float(row.get("占净值比例") or 0)
             except (TypeError, ValueError):
                 continue
-            if any(word in name for word in ("国债", "政策性", "地方政府债")):
+            if any(
+                word in name
+                for word in ("国债", "国家债券", "央行票据", "政策性", "地方政府债")
+            ):
                 rates_share += weight
             elif any(
                 word in name
@@ -254,6 +344,7 @@ def recommend_track_benchmark(
                     "短期融资",
                     "金融债（不含政策性）",
                     "同业存单",
+                    "资产支持证券",
                 )
             ):
                 credit_share += weight
@@ -271,10 +362,35 @@ def recommend_track_benchmark(
             "key": "cbond_composite",
             "理由": "该基金属于债券策略，使用覆盖全市场的中债新综合财富指数作为通用赛道基准。",
         }
-    if any(word in descriptor for word in ("中小盘", "小盘")):
+    if "科创" in descriptor:
+        return {
+            "key": "star50",
+            "理由": "基金聚焦科创板硬科技标的，科创50比综合宽基更贴近赛道。",
+        }
+    if "创业板" in descriptor:
+        return {
+            "key": "chinext",
+            "理由": "基金以创业板成长股为主，创业板指比综合宽基更贴近赛道。",
+        }
+    if any(word in descriptor for word in ("红利", "股息", "价值")):
+        return {
+            "key": "csi_dividend",
+            "理由": "基金偏高股息价值风格，中证红利比综合宽基更能反映其收益特征。",
+        }
+    if any(word in descriptor for word in ("微盘", "小微", "中证2000")):
+        return {
+            "key": "csi2000",
+            "理由": "基金聚焦微小市值股票，中证2000比中小盘指数更匹配。",
+        }
+    if "中小盘" in descriptor:
         return {
             "key": "csi500",
             "理由": "基金风格偏中小市值，中证500比大盘指数更匹配。",
+        }
+    if any(word in descriptor for word in ("小盘", "中证1000")):
+        return {
+            "key": "csi1000",
+            "理由": "基金风格偏小市值，中证1000比大中盘指数更匹配。",
         }
     if any(word in descriptor for word in ("股票", "混合", "权益")):
         return {

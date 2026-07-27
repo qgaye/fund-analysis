@@ -5,18 +5,17 @@ from __future__ import annotations
 import asyncio
 import copy
 import re
-import threading
-import time
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from benchmark_cache import BenchmarkFileCache
+from fund_ai_summary import build_ai_summary
 from benchmarks import (
     TRACK_BENCHMARKS,
     get_track_benchmark,
@@ -44,15 +43,12 @@ app = FastAPI(
 )
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-_period_holdings_cache: dict[
-    tuple[str, str, int],
-    tuple[float, dict[str, Any]],
-] = {}
-_period_holdings_cache_lock = threading.Lock()
 _fund_file_cache = FundFileCache(
     BASE_DIR / ".cache" / "funds",
+    holdings_ttl_seconds=CACHE_TTL_SECONDS,
 )
 _fund_request_locks: dict[str, asyncio.Lock] = {}
+_fund_holdings_request_locks: dict[str, asyncio.Lock] = {}
 _benchmark_file_cache = BenchmarkFileCache(
     BASE_DIR / ".cache" / "benchmarks",
 )
@@ -61,32 +57,6 @@ _stock_file_cache = StockFileCache(
     BASE_DIR / ".cache" / "stocks",
 )
 _stock_request_locks: dict[str, asyncio.Lock] = {}
-
-
-def _read_period_holdings_cache(
-    key: tuple[str, str, int],
-) -> dict[str, Any] | None:
-    now = time.monotonic()
-    with _period_holdings_cache_lock:
-        cached = _period_holdings_cache.get(key)
-        if cached is None:
-            return None
-        stored_at, value = cached
-        if now - stored_at > CACHE_TTL_SECONDS:
-            _period_holdings_cache.pop(key, None)
-            return None
-        return copy.deepcopy(value)
-
-
-def _write_period_holdings_cache(
-    key: tuple[str, str, int],
-    value: dict[str, Any],
-) -> None:
-    with _period_holdings_cache_lock:
-        _period_holdings_cache[key] = (
-            time.monotonic(),
-            copy.deepcopy(value),
-        )
 
 
 def _benchmark_response(
@@ -280,6 +250,7 @@ async def fund_detail(
                 get_fund_data,
                 code,
                 FUND_HOLDINGS_LIMIT,
+                enrich_stocks=False,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -306,6 +277,38 @@ async def fund_detail(
 
 
 @app.get(
+    "/api/funds/{fund_code}/ai-summary",
+    summary="基金 AI 友好摘要（一键复制）",
+    response_description="基于日缓存计算的 AI 友好 Markdown 文本",
+)
+async def fund_ai_summary(fund_code: str) -> PlainTextResponse:
+    code = fund_code.strip()
+    if not re.fullmatch(r"\d{6}", code):
+        raise HTTPException(
+            status_code=422,
+            detail="基金代码必须是 6 位数字，例如 000001。",
+        )
+
+    cached = _fund_file_cache.read(code)
+    if cached is None:
+        raise HTTPException(
+            status_code=404,
+            detail="尚无该基金的缓存数据，请先查询基金后再复制。",
+        )
+
+    payload = cached.get("payload") or {}
+    summary = build_ai_summary(payload)
+    return PlainTextResponse(
+        summary,
+        media_type="text/markdown; charset=utf-8",
+        headers={
+            "X-Cache-Status": "STALE" if cached.get("stale") else "FRESH",
+            "X-Next-Refresh": str(cached.get("next_refresh_at") or ""),
+        },
+    )
+
+
+@app.get(
     "/api/stocks/{stock_code}",
     summary="查询 A 股详情",
     response_description="股票基础资料、估值指标和前复权收盘价趋势",
@@ -318,10 +321,10 @@ async def stock_detail(
     ),
 ) -> JSONResponse:
     code = stock_code.strip()
-    if not re.fullmatch(r"\d{6}", code):
+    if not re.fullmatch(r"\d{6}", code) and not re.fullmatch(r"\d{5}", code):
         raise HTTPException(
             status_code=422,
-            detail="股票代码必须是 6 位数字，例如 600519。",
+            detail="股票代码必须是 6 位数字（A 股）或 5 位数字（港股），例如 600519、03328。",
         )
 
     cached = _stock_file_cache.read(code)
@@ -395,32 +398,47 @@ async def fund_holdings_by_period(
             detail="报告期必须使用 YYYYQ1 至 YYYYQ4 格式。",
         )
 
-    cache_key = (code, period_key, holdings_limit)
     if not refresh:
-        cached = _read_period_holdings_cache(cache_key)
+        cached = _fund_file_cache.read_holdings_period(code, period_key)
         if cached is not None:
             return JSONResponse(
                 jsonable_encoder(cached),
                 headers={"X-Cache": "HIT"},
             )
 
-    try:
-        result = await run_in_threadpool(
-            get_fund_holdings_by_period,
-            code,
-            period_key,
-            holdings_limit,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"季度持仓上游查询失败：{exc}",
-        ) from exc
-
-    _write_period_holdings_cache(cache_key, result)
-    return JSONResponse(
-        jsonable_encoder(result),
-        headers={"X-Cache": "MISS"},
+    lock = _fund_holdings_request_locks.setdefault(
+        f"{code}:{period_key}",
+        asyncio.Lock(),
     )
+    async with lock:
+        # 抢到锁后先复查本地缓存：并发的相同请求只需第一个查下游，
+        # 其余请求在此直接命中缓存，避免重复穿透到下游。
+        if not refresh:
+            cached = _fund_file_cache.read_holdings_period(code, period_key)
+            if cached is not None:
+                return JSONResponse(
+                    jsonable_encoder(cached),
+                    headers={"X-Cache": "HIT"},
+                )
+
+        try:
+            result = await run_in_threadpool(
+                get_fund_holdings_by_period,
+                code,
+                period_key,
+                holdings_limit,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"季度持仓上游查询失败：{exc}",
+            ) from exc
+
+        # 写入基金同一文件的季度持仓分区；若主体尚未缓存则跳过写入（依附主体存在）。
+        _fund_file_cache.write_holdings_period(code, period_key, result)
+        return JSONResponse(
+            jsonable_encoder(result),
+            headers={"X-Cache": "MISS"},
+        )

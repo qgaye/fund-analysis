@@ -23,7 +23,6 @@ let currentDividends = [];
 let navPlotPoints = [];
 let currentPeriodicUnit = "year";
 let currentPerformance = {};
-let currentPeerPerformance = {};
 let currentTrackBenchmark = null;
 let currentTrackBenchmarkKey = "";
 let trackBenchmarkRequestId = 0;
@@ -60,7 +59,7 @@ const navMetricConfig = {
   阶段收益: {
     valueKey: "累计收益率",
     subtitle: "近 1 天 / 1 月 / 3 月 / 6 月 / 今年以来 / 1 年 / 3 年及成立以来的阶段涨幅",
-    note: "同类由下游按基金类型划分；相对同类为基金涨幅与同类平均的相对差异比例，赛道差异继续按百分点展示。",
+    note: "阶段涨幅展示基金各区间涨跌，并与所选赛道对比；赛道差异按百分点展示。",
     tooltipLabel: "阶段涨幅",
     unit: "%",
   },
@@ -150,6 +149,27 @@ function validateCode(value) {
   return /^\d{6}$/.test(value);
 }
 
+function normalizeStockCode(value) {
+  const text = String(value ?? "").trim();
+  if (/^\d{5}$/.test(text)) return text; // 港股
+  if (/^\d{1,6}$/.test(text)) return text.padStart(6, "0"); // A 股
+  return text;
+}
+
+function validateStockCode(value) {
+  return /^\d{6}$/.test(value) || /^\d{5}$/.test(value);
+}
+
+function isHkStockCode(value) {
+  return /^\d{5}$/.test(String(value ?? "").trim());
+}
+
+function stockCurrencyUnit(currency, market) {
+  if (currency === "HKD" || market === "HK") return "港元";
+  if (currency === "USD") return "美元";
+  return "元";
+}
+
 function showInputError(message) {
   inputHelp.textContent = message;
   inputHelp.classList.add("invalid");
@@ -227,56 +247,9 @@ function optionalNumber(value) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
-function peerRankBand(peerRow = {}) {
-  const rank = optionalNumber(peerRow.排名);
-  const total = optionalNumber(peerRow.同类数量);
-  const reportedPercentile = optionalNumber(peerRow.排名分位);
-  const percentile = reportedPercentile != null
-    ? reportedPercentile
-    : rank != null && total != null && total > 0
-      ? (rank / total) * 100
-      : null;
-  if (!Number.isFinite(percentile)) {
-    return { className: "rank-neutral", label: "暂无分位", percentile: null };
-  }
-  if (percentile <= 5) {
-    return { className: "rank-front-5", label: "前5%", percentile };
-  }
-  if (percentile <= 10) {
-    return { className: "rank-front-10", label: "前10%", percentile };
-  }
-  if (percentile <= 20) {
-    return { className: "rank-front-20", label: "前20%", percentile };
-  }
-  if (percentile >= 95) {
-    return { className: "rank-back-5", label: "后5%", percentile };
-  }
-  if (percentile >= 90) {
-    return { className: "rank-back-10", label: "后10%", percentile };
-  }
-  if (percentile >= 80) {
-    return { className: "rank-back-20", label: "后20%", percentile };
-  }
-  return { className: "rank-middle", label: "中间区间", percentile };
-}
-
-function renderPerformance(
-  performance,
-  peerPerformance = currentPeerPerformance,
-) {
+function renderPerformance(performance) {
   currentPerformance = performance ?? {};
-  currentPeerPerformance = peerPerformance ?? {};
   const chart = document.querySelector("#performance-chart");
-  const peerContext = document.querySelector("#stage-peer-context");
-  const peerDetails = currentPeerPerformance.阶段 ?? {};
-  const peerType = currentPeerPerformance.同类;
-  peerContext.hidden = !peerType;
-  text("#stage-peer-type", peerType, "同类暂无");
-  text(
-    "#stage-peer-note",
-    currentPeerPerformance.说明,
-    "同类由下游数据源按基金类型划分。",
-  );
   const periods = [
     { label: "近1天", key: "日涨幅" },
     { label: "近1月", key: "近1月" },
@@ -312,57 +285,6 @@ function renderPerformance(
     value.textContent = valid ? formatPercent(numeric) : "—";
     value.className = valid ? movementClass(numeric) : "";
 
-    const peerRow = peerDetails[key] ?? {};
-    const peerAverage = optionalNumber(peerRow.同类平均);
-    const peerAverageValid = peerAverage != null;
-    const peerAverageValue = document.createElement("strong");
-    peerAverageValue.className = `peer-average-value ${
-      peerAverageValid ? movementClass(peerAverage) : ""
-    }`;
-    peerAverageValue.textContent = peerAverageValid
-      ? formatPercent(peerAverage)
-      : "—";
-
-    const calculatedPeerRelative =
-      valid && peerAverageValid && Math.abs(peerAverage) > 1e-12
-        ? ((numeric - peerAverage) / Math.abs(peerAverage)) * 100
-        : null;
-    const reportedPeerRelative = optionalNumber(
-      peerRow.相对同类差异比例,
-    );
-    const peerRelative = reportedPeerRelative != null
-      ? reportedPeerRelative
-      : calculatedPeerRelative;
-    const peerRelativeValue = document.createElement("strong");
-    peerRelativeValue.className = `peer-relative-value ${
-      Number.isFinite(peerRelative) ? movementClass(peerRelative) : ""
-    }`;
-    peerRelativeValue.textContent = Number.isFinite(peerRelative)
-      ? formatPercent(peerRelative)
-      : "—";
-    if (Number.isFinite(peerRelative)) {
-      const reportedExcess = optionalNumber(peerRow.超额收益);
-      const excess = reportedExcess != null
-        ? reportedExcess
-        : numeric - peerAverage;
-      peerRelativeValue.title =
-        `相对差异比例 =（基金涨幅－同类平均）÷同类平均绝对值；` +
-        `收益差 ${excess > 0 ? "+" : ""}${excess.toFixed(2)} 个百分点`;
-    }
-
-    const rankBand = peerRankBand(peerRow);
-    const rankCell = document.createElement("div");
-    rankCell.className = `peer-rank-cell ${rankBand.className}`;
-    const rankValue = document.createElement("strong");
-    rankValue.textContent = peerRow.同类排名 ?? "—";
-    const rankLabel = document.createElement("span");
-    rankLabel.textContent = peerRow.同类排名 ? rankBand.label : "排名暂无";
-    rankCell.append(rankValue, rankLabel);
-    if (Number.isFinite(rankBand.percentile)) {
-      rankCell.title =
-        `排名 ${peerRow.同类排名}，位于同类前 ${rankBand.percentile.toFixed(2)}%`;
-    }
-
     const benchmarkReturn = benchmarkStageReturn(key);
     const benchmarkValue = document.createElement("strong");
     benchmarkValue.className = `benchmark-value ${
@@ -389,9 +311,6 @@ function renderPerformance(
     item.append(
       label,
       value,
-      peerAverageValue,
-      peerRelativeValue,
-      rankCell,
       benchmarkValue,
       relativeValue,
     );
@@ -1379,17 +1298,41 @@ function renderNavChart(
       }),
     );
 
+    // The chart SVG uses preserveAspectRatio="none", so it is stretched
+    // non-uniformly to fill its container. That horizontally condenses the
+    // marker labels (worst on narrow mobile screens). Compute the exact
+    // horizontal counter-scale from the live render size so the label text is
+    // restored to a normal aspect ratio instead of relying on a fixed factor.
+    const svgClientRect = svg.getBoundingClientRect();
+    const labelScaleX =
+      svgClientRect.width > 0 && svgClientRect.height > 0
+        ? Math.min(
+            2.6,
+            Math.max(
+              1,
+              svgClientRect.height / height / (svgClientRect.width / width),
+            ),
+          )
+        : 1;
     const addMarker = (point, className, label, position = "above") => {
       const marker = svgNode("g", { class: `drawdown-marker ${className}` });
       const labelWidth = Math.max(92, label.length * 12 + 24);
-      const labelX = Math.min(
-        width - margin.right - labelWidth,
-        Math.max(margin.left, point.x - labelWidth / 2),
+      // The label box is scaled horizontally about its own center, so clamp
+      // using the scaled half-width to keep it fully inside the plot area.
+      const scaledHalfWidth = (labelWidth * labelScaleX) / 2;
+      const labelCenterX = Math.min(
+        width - margin.right - scaledHalfWidth,
+        Math.max(margin.left + scaledHalfWidth, point.x),
       );
+      const labelX = labelCenterX - labelWidth / 2;
       const labelY =
         position === "below"
           ? Math.min(height - margin.bottom - 30, point.y + 20)
           : Math.max(margin.top + 4, point.y - 38);
+      const scaleStyle =
+        labelScaleX > 1.001
+          ? `transform: scaleX(${labelScaleX}); transform-box: fill-box; transform-origin: center;`
+          : "";
       marker.append(
         svgNode("line", {
           x1: point.x,
@@ -1403,12 +1346,14 @@ function renderNavChart(
           width: labelWidth,
           height: 26,
           rx: 3,
+          style: scaleStyle,
         }),
       );
       const labelNode = svgNode("text", {
         x: labelX + labelWidth / 2,
         y: labelY + 17,
         "text-anchor": "middle",
+        style: scaleStyle,
       });
       labelNode.textContent = label;
       marker.append(
@@ -2006,6 +1951,13 @@ function renderTreemap(
     if (item.code) {
       const code = document.createElement("small");
       code.textContent = item.code;
+      if (item.hk) {
+        const badge = document.createElement("span");
+        badge.className = "treemap-market-badge hk";
+        badge.textContent = "HK";
+        badge.title = "港股";
+        code.append(document.createTextNode(" "), badge);
+      }
       cell.append(code);
     }
     container.append(cell);
@@ -2507,8 +2459,12 @@ function renderStockPriceChart(range = currentStockRange) {
   changeElement.className = Number.isFinite(change)
     ? movementClass(change)
     : "";
-  text("#stock-range-high", `${formatNumber(rawMax, 2)} 元`);
-  text("#stock-range-low", `${formatNumber(rawMin, 2)} 元`);
+  const priceUnit = stockCurrencyUnit(
+    currentStockDetail?.基础信息?.货币,
+    currentStockDetail?.基础信息?.市场类型,
+  );
+  text("#stock-range-high", `${formatNumber(rawMax, 2)} ${priceUnit}`);
+  text("#stock-range-low", `${formatNumber(rawMin, 2)} ${priceUnit}`);
   text(
     "#stock-range-dates",
     `${formatChartDate(rows[0].日期)} — ${formatChartDate(rows.at(-1).日期)}`,
@@ -2547,6 +2503,23 @@ function renderStockDetail(data, range = "1y") {
   const metrics = data.指标 ?? {};
   text("#stock-detail-name", basic.名称, "未知股票");
   text("#stock-detail-code", basic.代码);
+  const isHk = basic.市场类型 === "HK" || isHkStockCode(basic.代码);
+  const codeElement = document.querySelector("#stock-detail-code");
+  if (codeElement) {
+    let badge = codeElement.parentElement.querySelector(".stock-market-badge");
+    if (isHk) {
+      if (!badge) {
+        badge = document.createElement("span");
+        badge.className = "stock-market-badge hk";
+        codeElement.insertAdjacentElement("afterend", badge);
+      }
+      badge.textContent = "HK 港股";
+      badge.hidden = false;
+    } else if (badge) {
+      badge.hidden = true;
+    }
+  }
+  const priceUnit = stockCurrencyUnit(basic.货币, basic.市场类型);
   text("#stock-detail-industry", basic.行业, "行业暂无");
   text("#stock-detail-market", basic.市场, "市场暂无");
   text(
@@ -2555,7 +2528,7 @@ function renderStockDetail(data, range = "1y") {
   );
   text(
     "#stock-detail-price",
-    quote.最新价 == null ? null : `${formatNumber(quote.最新价, 2)} 元`,
+    quote.最新价 == null ? null : `${formatNumber(quote.最新价, 2)} ${priceUnit}`,
   );
   const changeElement = document.querySelector("#stock-detail-change");
   changeElement.textContent =
@@ -2600,8 +2573,8 @@ function renderStockDetail(data, range = "1y") {
 }
 
 async function openStockDetail(code, fallback = {}, forceRefresh = false) {
-  const normalized = String(code ?? "").trim().padStart(6, "0");
-  if (!validateCode(normalized)) return;
+  const normalized = normalizeStockCode(code);
+  if (!validateStockCode(normalized)) return;
   const dialog = document.querySelector("#stock-detail-dialog");
   const loading = document.querySelector("#stock-detail-loading");
   const error = document.querySelector("#stock-detail-error");
@@ -2792,6 +2765,13 @@ function renderHoldingGroup(group, type) {
             .join(" · ") || "—"
         : row.股票代码 ?? "—";
     security.append(name, code);
+    if (isStock && (row.市场 === "HK" || isHkStockCode(row.股票代码))) {
+      const badge = document.createElement("span");
+      badge.className = "stock-market-badge hk";
+      badge.textContent = "HK";
+      badge.title = "港股";
+      code.append(document.createTextNode(" "), badge);
+    }
 
     const industry = document.createElement("td");
     industry.className = "stock-industry-cell";
@@ -2857,6 +2837,7 @@ function renderHoldingGroup(group, type) {
           ? row.基金代码
           : row.股票代码,
       industry: isStock ? row.所属行业 : null,
+      hk: isStock && (row.市场 === "HK" || isHkStockCode(row.股票代码)),
       weight: row.占净值比例,
     })),
     isPenetration ? "目标 ETF 穿透持仓矩阵图" : `${type}持仓矩阵图`,
@@ -3011,6 +2992,34 @@ function initializeHoldingsExplorer(holdings) {
       : "最新披露",
   );
   renderHoldings(holdings, false);
+  // 首屏持仓为裸数据（无估值），随即补拉当前季度带估值持仓覆盖卡片。
+  void enrichHoldingsForCurrentPeriod();
+}
+
+async function enrichHoldingsForCurrentPeriod() {
+  const periodKey = currentHoldingsPeriodKey;
+  if (!currentCode || !periodKey) return;
+  // 沿用当前 holdingsRequestId：一旦用户切换季度或重新查询，本次补拉结果作废。
+  const requestId = holdingsRequestId;
+  try {
+    const params = new URLSearchParams({
+      period: periodKey,
+      holdings_limit: "20",
+    });
+    const response = await fetch(
+      `/api/funds/${currentCode}/holdings?${params}`,
+    );
+    if (!response.ok) return;
+    const payload = await response.json();
+    if (requestId !== holdingsRequestId) return;
+    if (currentHoldingsPeriodKey !== periodKey) return;
+    if ((payload.季报列表 ?? []).length) {
+      currentQuarterReports = payload.季报列表;
+    }
+    renderHoldings(payload, true);
+  } catch (error) {
+    // 补拉失败时静默保留首屏裸持仓，不干扰已展示的基金全貌。
+  }
 }
 
 async function queryHoldingsPeriod(periodKey) {
@@ -3156,6 +3165,8 @@ function renderFundProfile(basic) {
   const holders = basic.持有人结构 ?? {};
   const purchaseFee = basic.买入费率 ?? {};
   const feeRows = purchaseFee.明细 ?? [];
+  const redeemFee = basic.赎回费率 ?? {};
+  const redeemRows = redeemFee.明细 ?? [];
 
   text("#founded-date", basic.成立日期 ?? basic.成立日);
   text("#fund-age", basic.成立时间);
@@ -3236,51 +3247,53 @@ function renderFundProfile(basic) {
     "暂未取得该基金最新持有人结构。",
   );
 
-  const feeList = document.querySelector("#purchase-fee-list");
-  feeList.replaceChildren();
   text("#purchase-fee-method", purchaseFee.收费方式, "费率暂无");
   if (!feeRows.length) {
-    const empty = document.createElement("p");
-    empty.className = "purchase-fee-empty";
-    empty.textContent = "该基金暂无可用的申购费率表。";
-    feeList.append(empty);
-    text("#purchase-fee-lead-label", "最低金额档买入费率");
+    text("#purchase-fee-lead-label", "买入费率");
     text("#purchase-fee-lead", null);
     text(
       "#purchase-fee-note",
       purchaseFee.说明,
-      "部分不开放申购或无申购费的基金可能不提供分档费率。",
+      "部分不开放申购或无申购费的基金可能不提供费率表。",
+    );
+  } else {
+    const leadRow = feeRows[0];
+    const leadFee = leadRow.天天基金优惠费率 ?? leadRow.原费率 ?? "—";
+    text(
+      "#purchase-fee-lead-label",
+      leadRow.天天基金优惠费率 ? "买入费率 · 天天基金优惠" : "买入费率",
+    );
+    text("#purchase-fee-lead", leadFee);
+    text("#purchase-fee-note", purchaseFee.说明);
+  }
+
+  const redeemList = document.querySelector("#redeem-fee-list");
+  redeemList.replaceChildren();
+  if (!redeemRows.length) {
+    const empty = document.createElement("p");
+    empty.className = "purchase-fee-empty";
+    empty.textContent = "该基金暂无可用的赎回费率表。";
+    redeemList.append(empty);
+    text(
+      "#redeem-fee-note",
+      redeemFee.说明,
+      "部分基金可能不收取赎回费或未提供分档费率。",
     );
     return;
   }
-
-  const leadFee =
-    feeRows[0].天天基金优惠费率 ?? feeRows[0].原费率 ?? "—";
-  text(
-    "#purchase-fee-lead-label",
-    feeRows[0].天天基金优惠费率
-      ? "最低金额档 · 天天基金优惠"
-      : "最低金额档买入费率",
-  );
-  text("#purchase-fee-lead", leadFee);
-  feeRows.forEach((row) => {
+  redeemRows.forEach((row) => {
     const item = document.createElement("div");
     item.className = "purchase-fee-row";
     const condition = document.createElement("span");
-    condition.textContent = row.适用条件 ?? "默认金额档";
+    condition.textContent = row.适用条件 ?? "默认持有期限";
     const rates = document.createElement("div");
-    const original = document.createElement("strong");
-    original.textContent = row.原费率 ?? "—";
-    rates.append(original);
-    if (row.天天基金优惠费率) {
-      const discount = document.createElement("b");
-      discount.textContent = `${row.天天基金优惠费率} 渠道优惠`;
-      rates.append(discount);
-    }
+    const rate = document.createElement("strong");
+    rate.textContent = row.赎回费率 ?? "—";
+    rates.append(rate);
     item.append(condition, rates);
-    feeList.append(item);
+    redeemList.append(item);
   });
-  text("#purchase-fee-note", purchaseFee.说明);
+  text("#redeem-fee-note", redeemFee.说明);
 }
 
 function renderShareClassAdvice(advice) {
@@ -3319,7 +3332,7 @@ function renderFund(data) {
   const performance = data.历史业绩 ?? {};
   const source = data.数据来源 ?? {};
 
-  document.querySelector(".compact-profile").open = false;
+  document.querySelector(".compact-profile").open = true;
   document.querySelector(".holding-simulator").open = false;
 
   text("#fund-name", basic.名称);
@@ -3349,7 +3362,7 @@ function renderFund(data) {
   text("#data-source", `净值及业绩：${source.净值及业绩 ?? "AKShare"}`);
 
   renderFundProfile(basic);
-  renderPerformance(performance, data.同类表现 ?? {});
+  renderPerformance(performance);
   renderNavHistory(data.净值曲线);
   initializeTrackBenchmark(data.赛道基准建议);
   initializeHoldingsExplorer(data.基金持仓);
@@ -3388,6 +3401,7 @@ async function queryFund(code, refresh = false) {
       强制刷新: refresh,
     };
     renderFund(payload);
+    recordSearchHistory(code, payload?.基础资料?.名称 ?? "");
     setView("results");
     history.replaceState(null, "", `/?code=${code}`);
     results.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -3398,6 +3412,77 @@ async function queryFund(code, refresh = false) {
     setView("error");
   }
 }
+
+const SEARCH_HISTORY_COOKIE = "fund_search_history";
+const SEARCH_HISTORY_MAX = 12;
+const searchHistoryListEl = document.querySelector("#search-history-list");
+const searchHistoryEmptyEl = document.querySelector("#search-history-empty");
+const searchHistoryClearEl = document.querySelector("#search-history-clear");
+
+function readSearchHistory() {
+  const match = document.cookie
+    .split("; ")
+    .find((item) => item.startsWith(`${SEARCH_HISTORY_COOKIE}=`));
+  if (!match) return [];
+  try {
+    const parsed = JSON.parse(decodeURIComponent(match.split("=").slice(1).join("=")));
+    return Array.isArray(parsed)
+      ? parsed.filter((item) => item && /^\d{6}$/.test(item.code))
+      : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function writeSearchHistory(list) {
+  const expires = new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toUTCString();
+  const value = encodeURIComponent(JSON.stringify(list.slice(0, SEARCH_HISTORY_MAX)));
+  document.cookie = `${SEARCH_HISTORY_COOKIE}=${value}; expires=${expires}; path=/; SameSite=Lax`;
+}
+
+function recordSearchHistory(code, name) {
+  if (!/^\d{6}$/.test(code)) return;
+  const list = readSearchHistory().filter((item) => item.code !== code);
+  list.unshift({ code, name: name || "" });
+  writeSearchHistory(list);
+  renderSearchHistory();
+}
+
+function renderSearchHistory() {
+  const list = readSearchHistory();
+  searchHistoryListEl.innerHTML = "";
+  const isEmpty = !list.length;
+  searchHistoryListEl.hidden = isEmpty;
+  searchHistoryEmptyEl.hidden = !isEmpty;
+  searchHistoryClearEl.hidden = isEmpty;
+  if (isEmpty) return;
+  list.forEach((item) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "search-history-item";
+    button.dataset.code = item.code;
+    button.title = item.name ? `${item.name}（${item.code}）` : item.code;
+
+    const code = document.createElement("span");
+    code.className = "history-code";
+    code.textContent = item.code;
+
+    const name = document.createElement("span");
+    name.className = "history-name";
+    name.textContent = item.name || "未命名基金";
+
+    button.append(code, name);
+    button.addEventListener("click", () => queryFund(item.code));
+    searchHistoryListEl.append(button);
+  });
+}
+
+searchHistoryClearEl.addEventListener("click", () => {
+  writeSearchHistory([]);
+  renderSearchHistory();
+});
+
+renderSearchHistory();
 
 form.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -3415,6 +3500,74 @@ document.querySelectorAll("[data-code]").forEach((button) => {
 
 refreshButton.addEventListener("click", () => {
   if (currentCode) queryFund(currentCode, true);
+});
+
+const copyAiButton = document.querySelector("#copy-ai-button");
+const copyAiButtonLabel = copyAiButton?.querySelector("span");
+
+async function copyAiSummary() {
+  if (!currentCode || !copyAiButton) return;
+  const originalLabel = copyAiButtonLabel?.textContent ?? "复制给 AI";
+  copyAiButton.disabled = true;
+  if (copyAiButtonLabel) copyAiButtonLabel.textContent = "生成中…";
+  try {
+    const response = await fetch(`/api/funds/${currentCode}/ai-summary`);
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || `请求失败（${response.status}）`);
+    }
+    const summary = await response.text();
+    await writeToClipboard(summary);
+    if (copyAiButtonLabel) copyAiButtonLabel.textContent = "已复制";
+  } catch (error) {
+    if (copyAiButtonLabel) copyAiButtonLabel.textContent = "复制失败";
+    console.error("复制基金摘要失败：", error);
+  } finally {
+    setTimeout(() => {
+      copyAiButton.disabled = false;
+      if (copyAiButtonLabel) copyAiButtonLabel.textContent = originalLabel;
+    }, 1600);
+  }
+}
+
+async function writeToClipboard(value) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "absolute";
+  textarea.style.left = "-9999px";
+  document.body.append(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+}
+
+copyAiButton?.addEventListener("click", copyAiSummary);
+
+const fundCodeBadge = document.querySelector("#fund-code-badge");
+let fundCodeBadgeResetTimer = null;
+fundCodeBadge?.addEventListener("click", async () => {
+  const code = fundCodeBadge.textContent?.trim();
+  if (!code || !/^\d{6}$/.test(code)) return;
+  const original = code;
+  try {
+    await writeToClipboard(code);
+    fundCodeBadge.dataset.copied = "true";
+    fundCodeBadge.textContent = "已复制";
+  } catch (error) {
+    fundCodeBadge.textContent = "复制失败";
+    console.error("复制基金代码失败：", error);
+  } finally {
+    clearTimeout(fundCodeBadgeResetTimer);
+    fundCodeBadgeResetTimer = setTimeout(() => {
+      fundCodeBadge.textContent = original;
+      delete fundCodeBadge.dataset.copied;
+    }, 1200);
+  }
 });
 
 document
