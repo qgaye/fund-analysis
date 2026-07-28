@@ -4070,20 +4070,16 @@ document.querySelectorAll("[data-periodic-unit]").forEach((button) => {
 });
 
 const bullBearInfoToggle = document.querySelector("#bull-bear-info-toggle");
-const bullBearInfoPanel = document.querySelector("#bull-bear-info");
+const bullBearInfoDialog = document.querySelector("#bull-bear-info-dialog");
 bullBearInfoToggle?.addEventListener("click", () => {
-  const open = bullBearInfoPanel.hidden;
-  bullBearInfoPanel.hidden = !open;
-  bullBearInfoToggle.setAttribute("aria-expanded", String(open));
-  bullBearInfoToggle.classList.toggle("active", open);
+  if (!bullBearInfoDialog.open) bullBearInfoDialog.showModal();
 });
 document
   .querySelector("#bull-bear-info-close")
-  ?.addEventListener("click", () => {
-    bullBearInfoPanel.hidden = true;
-    bullBearInfoToggle.setAttribute("aria-expanded", "false");
-    bullBearInfoToggle.classList.remove("active");
-  });
+  ?.addEventListener("click", () => bullBearInfoDialog.close());
+bullBearInfoDialog?.addEventListener("click", (event) => {
+  if (event.target === bullBearInfoDialog) bullBearInfoDialog.close();
+});
 
 document
   .querySelector("#track-benchmark-select")

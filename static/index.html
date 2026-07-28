@@ -12,7 +12,7 @@
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%23f1eddf' stroke='%23151916' stroke-width='3'/%3E%3Ctext x='32' y='38' text-anchor='middle' font-family='serif' font-size='18' font-weight='700' fill='%23151916'%3EFL%3C/text%3E%3C/svg%3E"
     />
-    <link rel="stylesheet" href="/static/styles.css?v=20260728.4" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260728.6" />
   </head>
   <body>
     <div class="paper-noise" aria-hidden="true"></div>
@@ -517,27 +517,15 @@
                 i
               </button>
             </div>
-            <div id="bull-bear-info" class="bull-bear-info" hidden>
-              <div class="bull-bear-info-heading">
-                <span class="section-label">CYCLE NOTES / 牛熊周期说明</span>
-                <button
-                  type="button"
-                  id="bull-bear-info-close"
-                  class="bull-bear-info-close"
-                  aria-label="关闭说明"
-                >
-                  ×
-                </button>
-              </div>
-              <div id="bull-bear-info-list" class="bull-bear-info-list"></div>
+            <div class="bull-bear-chart-scroll">
+              <svg
+                id="bull-bear-chart"
+                viewBox="0 0 1000 360"
+                preserveAspectRatio="none"
+                role="img"
+                aria-label="各牛熊周期内本基金与沪深300累计涨跌幅走势"
+              ></svg>
             </div>
-            <svg
-              id="bull-bear-chart"
-              viewBox="0 0 1000 360"
-              preserveAspectRatio="none"
-              role="img"
-              aria-label="各牛熊周期内本基金与沪深300累计涨跌幅走势"
-            ></svg>
             <div id="bull-bear-empty" class="bull-bear-empty" hidden>
               暂无足够的净值数据用于绘制牛熊周期走势。
             </div>
@@ -1431,11 +1419,40 @@
       </div>
     </dialog>
 
+    <dialog
+      id="bull-bear-info-dialog"
+      class="metric-help-dialog"
+      aria-labelledby="bull-bear-info-title"
+    >
+      <div class="metric-help-sheet">
+        <button
+          id="bull-bear-info-close"
+          class="metric-help-close"
+          type="button"
+          aria-label="关闭牛熊周期说明"
+        >
+          <span>关闭</span>
+          <b aria-hidden="true">×</b>
+        </button>
+
+        <header class="metric-help-heading">
+          <p class="eyebrow">CYCLE NOTES / 牛熊周期说明</p>
+          <h2 id="bull-bear-info-title">2005 年后 A 股主要牛熊周期</h2>
+          <p>
+            每段周期以上证综指或沪深300的阶段高低点划分，列出时间段、点位变化与驱动背景；
+            标注本基金存续期覆盖到的周期及其区间涨跌幅。
+          </p>
+        </header>
+
+        <div id="bull-bear-info-list" class="bull-bear-info-list"></div>
+      </div>
+    </dialog>
+
     <footer class="site-footer">
       <span>FUND LENS / 2026</span>
       <span>PUBLIC DATA · CLEAR VIEW</span>
     </footer>
 
-    <script src="/static/app.js?v=20260728.5" defer></script>
+    <script src="/static/app.js?v=20260728.6" defer></script>
   </body>
 </html>
