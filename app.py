@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import re
 from pathlib import Path
 from typing import Any
@@ -18,7 +19,9 @@ from benchmark_cache import BenchmarkFileCache
 from fund_ai_summary import build_ai_summary
 from benchmarks import (
     TRACK_BENCHMARKS,
+    get_composite_benchmark,
     get_track_benchmark,
+    parse_composite_spec,
     track_benchmark_catalog,
 )
 from fund_cache import FundFileCache
@@ -146,6 +149,63 @@ async def health() -> dict[str, str]:
 @app.get("/api/benchmarks", summary="赛道基准目录")
 async def benchmark_catalog() -> dict[str, Any]:
     return {"基准": track_benchmark_catalog()}
+
+
+@app.get("/api/benchmarks/composite", summary="按业绩比较基准合成的复合基准")
+async def benchmark_composite(
+    spec: str = Query(
+        ...,
+        description="复合权重规格，如 csi_dividend:0.95,money_fund:0.05",
+    ),
+) -> JSONResponse:
+    try:
+        components = parse_composite_spec(spec)
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=422, detail=f"无效的复合基准：{exc}") from exc
+
+    canonical = ",".join(f"{key}:{components[key]:.6f}" for key in components)
+    digest = hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:16]
+    cache_key = f"composite_{digest}"
+
+    cached = _benchmark_file_cache.read(cache_key)
+    if cached is not None:
+        state = _benchmark_file_cache.state(cached)
+        if state != "EXPIRED":
+            return _benchmark_response(
+                cached,
+                cache_result="STALE" if state == "STALE" else "HIT",
+            )
+
+    lock = _benchmark_request_locks.setdefault(cache_key, asyncio.Lock())
+    async with lock:
+        cached = _benchmark_file_cache.read(cache_key)
+        if cached is not None:
+            state = _benchmark_file_cache.state(cached)
+            if state != "EXPIRED":
+                return _benchmark_response(
+                    cached,
+                    cache_result="STALE" if state == "STALE" else "HIT",
+                )
+        try:
+            result = await run_in_threadpool(
+                get_composite_benchmark,
+                components,
+            )
+        except Exception as exc:
+            if cached is not None:
+                stale = _benchmark_file_cache.defer_stale(
+                    cache_key,
+                    cached,
+                    error=str(exc),
+                )
+                return _benchmark_response(stale, cache_result="STALE")
+            raise HTTPException(
+                status_code=502,
+                detail=f"复合赛道基准上游查询失败：{exc}",
+            ) from exc
+
+        record = _benchmark_file_cache.write(cache_key, result)
+        return _benchmark_response(record, cache_result="MISS")
 
 
 @app.get("/api/benchmarks/{benchmark_key}", summary="赛道基准历史行情")

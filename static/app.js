@@ -25,6 +25,7 @@ let currentPeriodicUnit = "year";
 let currentPerformance = {};
 let currentTrackBenchmark = null;
 let currentTrackBenchmarkKey = "";
+let performanceCompositeSpec = "";
 let trackBenchmarkRequestId = 0;
 let benchmarkPlotPoints = [];
 let currentStockDetail = null;
@@ -1568,7 +1569,13 @@ async function loadTrackBenchmark(key, reason = "") {
   try {
     let payload = trackBenchmarkCache.get(key);
     if (!payload) {
-      const response = await fetch(`/api/benchmarks/${key}`);
+      const url =
+        key === "performance_composite"
+          ? `/api/benchmarks/composite?spec=${encodeURIComponent(
+              performanceCompositeSpec,
+            )}`
+          : `/api/benchmarks/${key}`;
+      const response = await fetch(url);
       payload = await response.json();
       if (!response.ok) {
         throw new Error(payload.detail || "赛道基准加载失败");
@@ -1593,9 +1600,53 @@ async function loadTrackBenchmark(key, reason = "") {
   }
 }
 
+// 把复合权重字典转成后端识别的 spec 字符串：csi_dividend:0.95,money_fund:0.05。
+function buildCompositeSpec(components = {}) {
+  return Object.entries(components)
+    .map(([key, weight]) => `${key}:${Number(weight).toFixed(6)}`)
+    .join(",");
+}
+
+// 按业绩比较基准合成的复合基准，作为一个动态选项插入下拉框顶部。
+function upsertCompositeOption(recommendation) {
+  const select = document.querySelector("#track-benchmark-select");
+  const spec = buildCompositeSpec(recommendation.复合);
+  performanceCompositeSpec = spec;
+  // spec 变化时，清掉旧的复合缓存，避免沿用其他基金的复合结果。
+  trackBenchmarkCache.delete("performance_composite");
+
+  const label = (recommendation.构成 ?? [])
+    .map((item) => `${item.简称} ${Math.round(item.权重 * 100)}%`)
+    .join(" + ");
+
+  let group = select.querySelector('optgroup[data-composite-group="1"]');
+  if (!group) {
+    group = document.createElement("optgroup");
+    group.label = "业绩比较基准";
+    group.dataset.compositeGroup = "1";
+    select.prepend(group);
+  }
+  let option = group.querySelector('option[value="performance_composite"]');
+  if (!option) {
+    option = document.createElement("option");
+    option.value = "performance_composite";
+    group.append(option);
+  }
+  option.textContent = label ? `业绩基准（${label}）` : "业绩比较基准";
+}
+
 function initializeTrackBenchmark(recommendation = {}) {
-  const key = recommendation.key || "hs300";
   currentTrackBenchmark = null;
+  const select = document.querySelector("#track-benchmark-select");
+  if (recommendation.key === "performance_composite" && recommendation.复合) {
+    upsertCompositeOption(recommendation);
+  } else {
+    // 非复合基金：清掉上一只基金遗留的复合动态选项与缓存。
+    select.querySelector('optgroup[data-composite-group="1"]')?.remove();
+    performanceCompositeSpec = "";
+    trackBenchmarkCache.delete("performance_composite");
+  }
+  const key = recommendation.key || "hs300";
   loadTrackBenchmark(key, recommendation.理由 || "");
 }
 

@@ -7,7 +7,11 @@ import pandas as pd
 from benchmarks import (
     _composite_series,
     _source_series,
+    get_composite_benchmark,
     get_track_benchmark,
+    match_performance_benchmark,
+    parse_composite_spec,
+    parse_performance_benchmark,
     recommend_track_benchmark,
     track_benchmark_catalog,
 )
@@ -69,7 +73,11 @@ class TrackBenchmarkTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(recommendation["key"], "hs300")
+        self.assertEqual(recommendation["key"], "performance_composite")
+        self.assertEqual(
+            recommendation["复合"],
+            {"hs300": 0.95, "money_fund": 0.05},
+        )
         self.assertIn("业绩比较基准", recommendation["理由"])
 
     def test_matches_supported_disclosed_benchmarks(self) -> None:
@@ -318,6 +326,98 @@ class TrackBenchmarkTests(unittest.TestCase):
 
         self.assertEqual(result["数量"], 2)
         self.assertEqual(result["明细"][-1]["指数值"], 101.25)
+
+
+class PerformanceBenchmarkParsingTests(unittest.TestCase):
+    def test_parse_extracts_names_and_weights(self) -> None:
+        components = parse_performance_benchmark(
+            "中证800成长指数收益率*70%+中债-综合全价(总值)指数收益率*30%"
+        )
+
+        self.assertEqual(len(components), 2)
+        self.assertEqual(components[0]["权重"], 0.7)
+        self.assertEqual(components[1]["权重"], 0.3)
+        self.assertIn("中证800", components[0]["原文"])
+
+    def test_parse_normalizes_fullwidth_symbols(self) -> None:
+        components = parse_performance_benchmark(
+            "沪深 300 指数收益率×95%＋银行活期存款利率（税后）×5%"
+        )
+
+        self.assertEqual([c["权重"] for c in components], [0.95, 0.05])
+
+    def test_parse_single_component_defaults_full_weight(self) -> None:
+        components = parse_performance_benchmark("中证500指数收益率")
+
+        self.assertEqual(len(components), 1)
+        self.assertEqual(components[0]["权重"], 1.0)
+
+    def test_match_maps_dividend_and_cash_to_composite(self) -> None:
+        matched = match_performance_benchmark(
+            "中证沪港深红利成长低波动指数收益率*95%"
+            "+银行活期存款利率(税后)*5%"
+        )
+
+        self.assertIsNotNone(matched)
+        self.assertAlmostEqual(matched["components"]["csi_dividend"], 0.95)
+        self.assertAlmostEqual(matched["components"]["money_fund"], 0.05)
+
+    def test_match_returns_none_when_component_unmatched(self) -> None:
+        # 中证白酒无对应赛道基准，应整体放弃。
+        matched = match_performance_benchmark(
+            "中证白酒指数收益率*95%"
+            "+金融机构人民币活期存款基准利率(税后)*5%"
+        )
+
+        self.assertIsNone(matched)
+
+    def test_recommend_returns_composite_for_multi_component(self) -> None:
+        recommendation = recommend_track_benchmark(
+            "示例红利低波基金",
+            "指数型-股票",
+            performance_benchmark=(
+                "中证红利指数收益率*90%+银行活期存款利率(税后)*10%"
+            ),
+        )
+
+        self.assertEqual(recommendation["key"], "performance_composite")
+        self.assertAlmostEqual(recommendation["复合"]["csi_dividend"], 0.9)
+        self.assertAlmostEqual(recommendation["复合"]["money_fund"], 0.1)
+
+    def test_recommend_falls_back_when_unmatched(self) -> None:
+        recommendation = recommend_track_benchmark(
+            "示例白酒指数基金",
+            "指数型-股票",
+            performance_benchmark="中证白酒指数收益率*95%",
+        )
+
+        self.assertNotEqual(recommendation["key"], "performance_composite")
+
+    def test_parse_composite_spec_normalizes_weights(self) -> None:
+        components = parse_composite_spec("csi_dividend:0.95,money_fund:0.05")
+
+        self.assertAlmostEqual(components["csi_dividend"], 0.95)
+        self.assertAlmostEqual(components["money_fund"], 0.05)
+
+    def test_parse_composite_spec_rejects_unknown_key(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_composite_spec("not_a_key:1")
+
+    @patch("benchmarks._source_series")
+    def test_get_composite_benchmark_serializes(self, mocked_source) -> None:
+        dates = pd.to_datetime(["2026-01-01", "2026-01-02"])
+        mocked_source.side_effect = [
+            pd.Series([100.0, 110.0], index=dates),
+            pd.Series([100.0, 100.0], index=dates),
+        ]
+
+        result = get_composite_benchmark({"hs300": 0.8, "money_fund": 0.2})
+
+        self.assertEqual(result["key"], "performance_composite")
+        self.assertEqual(result["数量"], 2)
+        self.assertEqual(len(result["构成"]), 2)
+        # 80% 涨 10% + 20% 持平 = 8%。
+        self.assertAlmostEqual(result["明细"][-1]["指数值"], 108.0)
 
 
 if __name__ == "__main__":
