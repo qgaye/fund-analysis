@@ -265,6 +265,61 @@ async def benchmark_history(benchmark_key: str) -> JSONResponse:
         return _benchmark_response(record, cache_result="MISS")
 
 
+async def _load_fund_record(
+    code: str,
+    *,
+    refresh: bool = False,
+) -> tuple[dict[str, Any], str]:
+    """读取或按需查询基金记录，返回 (record, cache_result)。
+
+    通过按基金代码维度的 asyncio.Lock 保证同一基金同时只有一个上游查询，
+    fund_detail 与 ai-summary 等端点共用该锁。
+    """
+
+    cached = _fund_file_cache.read(code)
+    if not refresh and cached is not None:
+        state = _fund_file_cache.state(cached)
+        if state != "EXPIRED":
+            return cached, ("STALE" if state == "STALE" else "HIT")
+
+    lock = _fund_request_locks.setdefault(code, asyncio.Lock())
+    async with lock:
+        cached = _fund_file_cache.read(code)
+        if not refresh and cached is not None:
+            state = _fund_file_cache.state(cached)
+            if state != "EXPIRED":
+                return cached, ("STALE" if state == "STALE" else "HIT")
+        try:
+            result = await run_in_threadpool(
+                get_fund_data,
+                code,
+                FUND_HOLDINGS_LIMIT,
+                enrich_stocks=False,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:
+            if not refresh and cached is not None:
+                stale = _fund_file_cache.defer_stale(
+                    code,
+                    cached,
+                    error=str(exc),
+                )
+                return stale, "STALE"
+            if isinstance(exc, FundLookupError):
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=502,
+                detail=f"AKShare 上游查询失败：{exc}",
+            ) from exc
+
+        record = _fund_file_cache.write(
+            code,
+            result,
+        )
+        return record, "MISS"
+
+
 @app.get(
     "/api/funds/{fund_code}",
     summary="查询单只基金",
@@ -284,62 +339,14 @@ async def fund_detail(
             detail="基金代码必须是 6 位数字，例如 000001。",
         )
 
-    cached = _fund_file_cache.read(code)
-    if not refresh and cached is not None:
-        state = _fund_file_cache.state(cached)
-        if state != "EXPIRED":
-            return _fund_response(
-                cached,
-                cache_result="STALE" if state == "STALE" else "HIT",
-            )
-
-    lock = _fund_request_locks.setdefault(code, asyncio.Lock())
-    async with lock:
-        cached = _fund_file_cache.read(code)
-        if not refresh and cached is not None:
-            state = _fund_file_cache.state(cached)
-            if state != "EXPIRED":
-                return _fund_response(
-                    cached,
-                    cache_result=(
-                        "STALE" if state == "STALE" else "HIT"
-                    ),
-                )
-        try:
-            result = await run_in_threadpool(
-                get_fund_data,
-                code,
-                FUND_HOLDINGS_LIMIT,
-                enrich_stocks=False,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except Exception as exc:
-            if not refresh and cached is not None:
-                stale = _fund_file_cache.defer_stale(
-                    code,
-                    cached,
-                    error=str(exc),
-                )
-                return _fund_response(stale, cache_result="STALE")
-            if isinstance(exc, FundLookupError):
-                raise HTTPException(status_code=404, detail=str(exc)) from exc
-            raise HTTPException(
-                status_code=502,
-                detail=f"AKShare 上游查询失败：{exc}",
-            ) from exc
-
-        record = _fund_file_cache.write(
-            code,
-            result,
-        )
-        return _fund_response(record, cache_result="MISS")
+    record, cache_result = await _load_fund_record(code, refresh=refresh)
+    return _fund_response(record, cache_result=cache_result)
 
 
 @app.get(
     "/api/funds/{fund_code}/ai-summary",
     summary="基金 AI 友好摘要（一键复制）",
-    response_description="基于日缓存计算的 AI 友好 Markdown 文本",
+    response_description="AI 友好 Markdown 文本；无缓存时自动查询基金数据",
 )
 async def fund_ai_summary(fund_code: str) -> PlainTextResponse:
     code = fund_code.strip()
@@ -349,21 +356,18 @@ async def fund_ai_summary(fund_code: str) -> PlainTextResponse:
             detail="基金代码必须是 6 位数字，例如 000001。",
         )
 
-    cached = _fund_file_cache.read(code)
-    if cached is None:
-        raise HTTPException(
-            status_code=404,
-            detail="尚无该基金的缓存数据，请先查询基金后再复制。",
-        )
+    # 无缓存时主动查询基金数据；共用 fund_detail 的按代码锁，避免并发重复查询。
+    record, cache_result = await _load_fund_record(code)
 
-    payload = cached.get("payload") or {}
+    payload = record.get("payload") or {}
     summary = build_ai_summary(payload)
     return PlainTextResponse(
         summary,
         media_type="text/markdown; charset=utf-8",
         headers={
-            "X-Cache-Status": "STALE" if cached.get("stale") else "FRESH",
-            "X-Next-Refresh": str(cached.get("next_refresh_at") or ""),
+            "X-Cache": cache_result,
+            "X-Cache-Status": "STALE" if record.get("stale") else "FRESH",
+            "X-Next-Refresh": str(record.get("next_refresh_at") or ""),
         },
     )
 
