@@ -35,6 +35,84 @@ let currentStockFallback = {};
 let stockDetailRequestId = 0;
 let stockPlotPoints = [];
 const trackBenchmarkCache = new Map();
+let hs300Series = null;
+let hs300RequestId = 0;
+
+// 2005 年后 A 股主要牛熊周期（以上证/沪深300阶段高低点月份为准）。
+const bullBearCycles = [
+  {
+    type: "bull",
+    start: "2005-06-01",
+    end: "2007-10-31",
+    label: "2005–07 大牛市",
+    points: "上证综指 998 → 6124 点",
+    driver: "股权分置改革落地、人民币升值预期、经济高速增长与流动性充裕共同推动的全面大牛市。",
+  },
+  {
+    type: "bear",
+    start: "2007-10-31",
+    end: "2008-10-31",
+    label: "2008 熊市",
+    points: "上证综指 6124 → 1664 点",
+    driver: "全球金融危机爆发、外需骤降与前期估值泡沫破裂，市场单边急跌。",
+  },
+  {
+    type: "bull",
+    start: "2008-10-31",
+    end: "2009-08-31",
+    label: "2009 反弹",
+    points: "上证综指 1664 → 3478 点",
+    driver: "“四万亿”经济刺激计划与信贷天量投放带动的快速反弹。",
+  },
+  {
+    type: "bear",
+    start: "2009-08-31",
+    end: "2014-06-30",
+    label: "2009–14 慢熊",
+    points: "上证综指 3478 → 约 2000 点",
+    driver: "经济增速换挡、IPO 扩容与去产能压制估值，长达数年的震荡阴跌。",
+  },
+  {
+    type: "bull",
+    start: "2014-07-01",
+    end: "2015-06-12",
+    label: "2014–15 杠杆牛",
+    points: "上证综指 约 2000 → 5178 点",
+    driver: "多次降息降准、融资融券与场外配资杠杆资金涌入、改革牛预期驱动的快速上涨。",
+  },
+  {
+    type: "bear",
+    start: "2015-06-12",
+    end: "2016-01-28",
+    label: "2015 股灾",
+    points: "上证综指 5178 → 2638 点",
+    driver: "清理场外配资、去杠杆引发流动性踩踏，年初熔断机制加剧下跌。",
+  },
+  {
+    type: "bull",
+    start: "2019-01-04",
+    end: "2021-02-18",
+    label: "2019–21 结构牛",
+    points: "沪深300 约 2935 → 5930 点",
+    driver: "外资持续流入、注册制推进与核心资产（白马、消费、新能源）抱团行情驱动的结构性牛市。",
+  },
+  {
+    type: "bear",
+    start: "2021-02-18",
+    end: "2024-02-05",
+    label: "2021–24 调整",
+    points: "沪深300 5930 → 约 3180 点",
+    driver: "核心资产抱团瓦解，叠加地产风险、监管收紧与经济复苏不及预期，市场持续调整。",
+  },
+  {
+    type: "bull",
+    start: "2024-09-24",
+    end: new Date().toISOString().slice(0, 10),
+    label: "2024–至今 反攻",
+    points: "沪深300 自 3200 点区间回升",
+    driver: "“924”一揽子货币金融政策集中发力、政治局会议超预期定调，风险偏好修复带动市场强势反弹。",
+  },
+];
 
 const palette = [
   "#d33b28",
@@ -90,6 +168,13 @@ const navMetricConfig = {
     subtitle: "区间收益曲线中的最大回撤与修复阶段",
     note: "基金与所选赛道采用相同区间计算最大回撤；基金以绿色/红色标出回撤与修复，蓝色标出赛道对应阶段，修复天数按自然日计算。",
     tooltipLabel: "区间收益",
+    unit: "%",
+  },
+  牛熊周期: {
+    valueKey: "累计净值",
+    subtitle: "2005 年后各轮 A 股牛熊周期内本基金与沪深300的累计涨跌幅",
+    note: "每个牛熊周期内本基金（红）与沪深300（蓝）各自以该周期首个可用净值归零，用于对比同一轮行情中的表现；仅展示本基金存续期覆盖到的周期。",
+    tooltipLabel: "周期涨幅",
     unit: "%",
   },
 };
@@ -912,6 +997,271 @@ function buildYAxisTicks(minValue, maxValue, includeZero = false) {
     );
 }
 
+// 沪深300 走势独立获取，不受用户当前所选赛道基准影响。
+async function ensureHs300Series() {
+  if (hs300Series) return hs300Series;
+  const cached = trackBenchmarkCache.get("hs300");
+  if (cached?.明细?.length) {
+    hs300Series = cached.明细;
+    return hs300Series;
+  }
+  const requestId = ++hs300RequestId;
+  try {
+    const response = await fetch("/api/benchmarks/hs300");
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.detail || "沪深300 加载失败");
+    if (requestId !== hs300RequestId) return hs300Series;
+    trackBenchmarkCache.set("hs300", payload);
+    hs300Series = payload.明细 ?? [];
+  } catch {
+    if (requestId === hs300RequestId) hs300Series = null;
+  }
+  return hs300Series;
+}
+
+// 将 [{日期, 值}] 序列按周期起止裁剪并以首个可用点归零为累计涨幅。
+function normalizedCycleReturns(rows, start, end, valueKey) {
+  if (!rows?.length) return [];
+  const within = rows
+    .map((row) => ({
+      日期: row.日期,
+      value: Number(row[valueKey]),
+    }))
+    .filter(
+      (row) =>
+        row.日期 &&
+        Number.isFinite(row.value) &&
+        row.日期 >= start &&
+        row.日期 <= end,
+    )
+    .sort((a, b) => a.日期.localeCompare(b.日期));
+  if (within.length < 2) return [];
+  const base = within[0].value;
+  if (!Number.isFinite(base) || base <= 0) return [];
+  return within.map((row) => ({
+    日期: row.日期,
+    累计收益率: (row.value / base - 1) * 100,
+  }));
+}
+
+function computeBullBearCycles() {
+  const navRows = currentNavHistory?.累计净值?.明细 ?? [];
+  const hs300 = hs300Series ?? [];
+  if (navRows.length < 2 || hs300.length < 2) return [];
+
+  return bullBearCycles
+    .map((cycle) => {
+      const fund = normalizedCycleReturns(
+        navRows,
+        cycle.start,
+        cycle.end,
+        "累计净值",
+      );
+      const benchmark = normalizedCycleReturns(
+        hs300,
+        cycle.start,
+        cycle.end,
+        "指数值",
+      );
+      if (fund.length < 2 || benchmark.length < 2) return null;
+      return {
+        ...cycle,
+        fund,
+        benchmark,
+        fundReturn: fund.at(-1).累计收益率,
+        benchmarkReturn: benchmark.at(-1).累计收益率,
+      };
+    })
+    .filter(Boolean);
+}
+
+function renderBullBearInfo(cycles) {
+  const list = document.querySelector("#bull-bear-info-list");
+  list.replaceChildren();
+  // 展示的周期只用本基金实际覆盖到的段；用起止日期匹配对应涨幅。
+  const coveredKeys = new Set(cycles.map((cycle) => cycle.start));
+  bullBearCycles.forEach((cycle) => {
+    const covered = cycles.find((item) => item.start === cycle.start);
+    const item = document.createElement("div");
+    item.className = `bull-bear-info-item ${cycle.type}${
+      coveredKeys.has(cycle.start) ? " covered" : ""
+    }`;
+
+    const head = document.createElement("div");
+    head.className = "bull-bear-info-item-head";
+    const name = document.createElement("strong");
+    name.textContent = cycle.label;
+    const tag = document.createElement("span");
+    tag.className = `bull-bear-info-tag ${cycle.type}`;
+    tag.textContent = cycle.type === "bull" ? "牛市" : "熊市";
+    head.append(name, tag);
+
+    const period = document.createElement("p");
+    period.className = "bull-bear-info-period";
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const endLabel = cycle.end >= todayIso ? "至今" : cycle.end;
+    period.textContent = `${cycle.start} 至 ${endLabel} · ${cycle.points}`;
+
+    const driver = document.createElement("p");
+    driver.className = "bull-bear-info-driver";
+    driver.textContent = cycle.driver;
+
+    item.append(head, period, driver);
+
+    if (covered) {
+      const perf = document.createElement("p");
+      perf.className = "bull-bear-info-perf";
+      perf.textContent = `本基金 ${formatPercent(
+        covered.fundReturn,
+      )} · 沪深300 ${formatPercent(covered.benchmarkReturn)}`;
+      item.append(perf);
+    } else {
+      const perf = document.createElement("p");
+      perf.className = "bull-bear-info-perf muted";
+      perf.textContent = "本基金当时尚未成立，未纳入走势图";
+      item.append(perf);
+    }
+    list.append(item);
+  });
+}
+
+function renderBullBearCycles() {
+  const svg = document.querySelector("#bull-bear-chart");
+  const empty = document.querySelector("#bull-bear-empty");
+  svg.replaceChildren();
+
+  const cycles = computeBullBearCycles();
+  renderBullBearInfo(cycles);
+  if (!cycles.length) {
+    svg.hidden = true;
+    empty.hidden = false;
+    return;
+  }
+  svg.hidden = false;
+  empty.hidden = true;
+
+  const width = 1000;
+  const height = 360;
+  const margin = { top: 30, right: 16, bottom: 58, left: 16 };
+  const plotWidth = width - margin.left - margin.right;
+  const plotHeight = height - margin.top - margin.bottom;
+  const gap = 10;
+  const segmentWidth =
+    (plotWidth - gap * (cycles.length - 1)) / cycles.length;
+
+  // 统一 y 轴范围，覆盖所有周期内两条曲线的极值，并含 0。
+  let minValue = 0;
+  let maxValue = 0;
+  cycles.forEach((cycle) => {
+    [...cycle.fund, ...cycle.benchmark].forEach((row) => {
+      minValue = Math.min(minValue, row.累计收益率);
+      maxValue = Math.max(maxValue, row.累计收益率);
+    });
+  });
+  const span = maxValue - minValue || 1;
+  minValue -= span * 0.08;
+  maxValue += span * 0.08;
+
+  const yFor = (value) =>
+    margin.top +
+    ((maxValue - value) / Math.max(maxValue - minValue, 0.0001)) * plotHeight;
+
+  // 零基准线。
+  const zeroY = yFor(0);
+  svg.append(
+    svgNode("line", {
+      x1: margin.left,
+      y1: zeroY,
+      x2: width - margin.right,
+      y2: zeroY,
+      class: "bull-bear-zero",
+    }),
+  );
+
+  cycles.forEach((cycle, index) => {
+    const segLeft = margin.left + index * (segmentWidth + gap);
+    const segRight = segLeft + segmentWidth;
+    const startT = new Date(`${cycle.start}T00:00:00`).getTime();
+    const endT = new Date(`${cycle.end}T00:00:00`).getTime();
+    const xFor = (date) =>
+      segLeft +
+      ((new Date(`${date}T00:00:00`).getTime() - startT) /
+        Math.max(endT - startT, 1)) *
+        segmentWidth;
+
+    // 周期背景色：牛市浅金、熊市浅灰。
+    svg.append(
+      svgNode("rect", {
+        x: segLeft,
+        y: margin.top,
+        width: segmentWidth,
+        height: plotHeight,
+        class: `bull-bear-band ${cycle.type}`,
+      }),
+    );
+
+    const pathFor = (rows) =>
+      rows
+        .map(
+          (row, i) =>
+            `${i === 0 ? "M" : "L"}${xFor(row.日期).toFixed(2)} ${yFor(
+              row.累计收益率,
+            ).toFixed(2)}`,
+        )
+        .join(" ");
+
+    svg.append(
+      svgNode("path", {
+        d: pathFor(cycle.benchmark),
+        class: "bull-bear-line benchmark",
+      }),
+    );
+    svg.append(
+      svgNode("path", {
+        d: pathFor(cycle.fund),
+        class: "bull-bear-line fund",
+      }),
+    );
+
+    // 周期名称。
+    const nameLabel = svgNode("text", {
+      x: (segLeft + segRight) / 2,
+      y: height - margin.bottom + 20,
+      class: "bull-bear-name",
+      "text-anchor": "middle",
+    });
+    nameLabel.textContent = cycle.label;
+    svg.append(nameLabel);
+
+    // 牛/熊标签。
+    const typeLabel = svgNode("text", {
+      x: (segLeft + segRight) / 2,
+      y: height - margin.bottom + 36,
+      class: `bull-bear-type ${cycle.type}`,
+      "text-anchor": "middle",
+    });
+    typeLabel.textContent = cycle.type === "bull" ? "牛市" : "熊市";
+    svg.append(typeLabel);
+
+    // 本基金与沪深300 期末涨幅数值。
+    const fundEnd = svgNode("text", {
+      x: (segLeft + segRight) / 2,
+      y: margin.top - 14,
+      class: "bull-bear-value fund",
+      "text-anchor": "middle",
+    });
+    fundEnd.textContent = formatPercent(cycle.fundReturn);
+    const benchEnd = svgNode("text", {
+      x: (segLeft + segRight) / 2,
+      y: margin.top - 3,
+      class: "bull-bear-value benchmark",
+      "text-anchor": "middle",
+    });
+    benchEnd.textContent = formatPercent(cycle.benchmarkReturn);
+    svg.append(fundEnd, benchEnd);
+  });
+}
+
 function renderNavChart(
   range = currentNavRange,
   metric = currentNavMetric,
@@ -928,10 +1278,12 @@ function renderNavChart(
   const drawdownComparison = document.querySelector(
     "#drawdown-comparison",
   );
+  const bullBearPanel = document.querySelector("#bull-bear-panel");
   const noData = document.querySelector("#no-nav-history");
   const tooltip = document.querySelector("#nav-chart-tooltip");
   const summary = document.querySelector(".nav-history-summary");
   const isDrawdownView = metric === "回撤修复";
+  const isBullBearView = metric === "牛熊周期";
   const isPerformanceView = metric === "累计收益率";
   const isBenchmarkCurveView = isPerformanceView || isDrawdownView;
   const drawdownAnalysis = isDrawdownView
@@ -949,17 +1301,20 @@ function renderNavChart(
   const isDividendView = metric === "分红记录";
   const isPeriodicView = metric === "周期收益";
   const isStageView = metric === "阶段收益";
-  customPanel.hidden = range !== "custom" || isPeriodicView || isStageView;
-  chartShell.hidden = isDividendView || isPeriodicView || isStageView;
+  const isPanelView =
+    isDividendView || isPeriodicView || isStageView || isBullBearView;
+  customPanel.hidden = range !== "custom" || isPanelView;
+  chartShell.hidden = isPanelView;
   dividendPanel.hidden = !isDividendView;
   periodicPanel.hidden = !isPeriodicView;
   stagePanel.hidden = !isStageView;
+  bullBearPanel.hidden = !isBullBearView;
   drawdownComparison.hidden = !isDrawdownView;
-  summary.hidden = isPeriodicView || isStageView || isDrawdownView;
+  summary.hidden = isPeriodicView || isStageView || isDrawdownView || isBullBearView;
   summary.classList.toggle("drawdown-summary", isDrawdownView);
   document.querySelector("#nav-range-switcher").hidden =
-    isPeriodicView || isStageView;
-  document.querySelector("#track-benchmark-control").hidden = false;
+    isPeriodicView || isStageView || isBullBearView;
+  document.querySelector("#track-benchmark-control").hidden = isBullBearView;
   document.querySelector("#nav-chart-legend").hidden =
     !isBenchmarkCurveView;
   text(
@@ -990,6 +1345,13 @@ function renderNavChart(
       : config.subtitle,
   );
   text("#nav-chart-note", config.note);
+  if (isBullBearView) {
+    noData.hidden = true;
+    ensureHs300Series().then(() => {
+      if (currentNavMetric === "牛熊周期") renderBullBearCycles();
+    });
+    return;
+  }
   if (isStageView) {
     noData.hidden = true;
     renderPerformance(currentPerformance);
@@ -1635,8 +1997,69 @@ function upsertCompositeOption(recommendation) {
   option.textContent = label ? `业绩基准（${label}）` : "业绩比较基准";
 }
 
-function initializeTrackBenchmark(recommendation = {}) {
+// 下拉框分组顺序，以及「赛道基准类型」→「下拉分组」的映射。
+const BENCHMARK_GROUP_ORDER = ["股票宽基", "债券赛道", "货币现金", "股债组合"];
+
+function benchmarkGroupOf(type) {
+  if (typeof type === "string" && type.startsWith("债券")) return "债券赛道";
+  if (BENCHMARK_GROUP_ORDER.includes(type)) return type;
+  return "股票宽基"; // 未知类型兜底归入股票宽基。
+}
+
+// 依据 catalog 动态渲染下拉框的 optgroup/option（保留已插入的业绩比较基准复合项）。
+function populateBenchmarkSelect(catalog) {
+  const select = document.querySelector("#track-benchmark-select");
+  const composite = select.querySelector('optgroup[data-composite-group="1"]');
+  const groups = new Map();
+  catalog.forEach((item) => {
+    const label = benchmarkGroupOf(item.类型);
+    if (!groups.has(label)) groups.set(label, []);
+    groups.get(label).push(item);
+  });
+  const fragment = document.createDocumentFragment();
+  BENCHMARK_GROUP_ORDER.forEach((label) => {
+    const items = groups.get(label);
+    if (!items || !items.length) return;
+    const optgroup = document.createElement("optgroup");
+    optgroup.label = label;
+    items.forEach((item) => {
+      const option = document.createElement("option");
+      option.value = item.key;
+      option.textContent = item.简称 || item.名称;
+      optgroup.append(option);
+    });
+    fragment.append(optgroup);
+  });
+  select.replaceChildren(fragment);
+  if (composite) select.prepend(composite);
+}
+
+let benchmarkSelectPopulated = null;
+
+// 拉取 catalog 并填充下拉框，promise 缓存确保只填充一次。
+function ensureBenchmarkSelectPopulated() {
+  if (!benchmarkSelectPopulated) {
+    benchmarkSelectPopulated = loadBenchmarkCatalog()
+      .then((catalog) => {
+        populateBenchmarkSelect(catalog);
+        return catalog;
+      })
+      .catch((error) => {
+        benchmarkSelectPopulated = null;
+        throw error;
+      });
+  }
+  return benchmarkSelectPopulated;
+}
+
+async function initializeTrackBenchmark(recommendation = {}) {
   currentTrackBenchmark = null;
+  // 先确保下拉框已按 catalog 填充，之后设置 select.value 才能选中。
+  try {
+    await ensureBenchmarkSelectPopulated();
+  } catch {
+    // 目录加载失败时下拉框可能为空，仍按 key 尝试加载并由状态栏提示。
+  }
   const select = document.querySelector("#track-benchmark-select");
   if (recommendation.key === "performance_composite" && recommendation.复合) {
     upsertCompositeOption(recommendation);
@@ -3646,6 +4069,22 @@ document.querySelectorAll("[data-periodic-unit]").forEach((button) => {
   );
 });
 
+const bullBearInfoToggle = document.querySelector("#bull-bear-info-toggle");
+const bullBearInfoPanel = document.querySelector("#bull-bear-info");
+bullBearInfoToggle?.addEventListener("click", () => {
+  const open = bullBearInfoPanel.hidden;
+  bullBearInfoPanel.hidden = !open;
+  bullBearInfoToggle.setAttribute("aria-expanded", String(open));
+  bullBearInfoToggle.classList.toggle("active", open);
+});
+document
+  .querySelector("#bull-bear-info-close")
+  ?.addEventListener("click", () => {
+    bullBearInfoPanel.hidden = true;
+    bullBearInfoToggle.setAttribute("aria-expanded", "false");
+    bullBearInfoToggle.classList.remove("active");
+  });
+
 document
   .querySelector("#track-benchmark-select")
   .addEventListener("change", (event) => {
@@ -3820,6 +4259,9 @@ function loadBenchmarkCatalog() {
   }
   return benchmarkCatalogPromise;
 }
+
+// 页面加载即填充下拉框，避免查询基金前下拉框为空。
+ensureBenchmarkSelectPopulated().catch(() => {});
 
 function renderBenchmarkHelp(catalog) {
   benchmarkHelpNav.replaceChildren();

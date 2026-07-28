@@ -12,7 +12,7 @@
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%23f1eddf' stroke='%23151916' stroke-width='3'/%3E%3Ctext x='32' y='38' text-anchor='middle' font-family='serif' font-size='18' font-weight='700' fill='%23151916'%3EFL%3C/text%3E%3C/svg%3E"
     />
-    <link rel="stylesheet" href="/static/styles.css?v=20260727.5" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260728.4" />
   </head>
   <body>
     <div class="paper-noise" aria-hidden="true"></div>
@@ -294,6 +294,9 @@
                 <button type="button" data-nav-metric="回撤修复" role="tab">
                   回撤修复
                 </button>
+                <button type="button" data-nav-metric="牛熊周期" role="tab">
+                  牛熊周期
+                </button>
                 <button type="button" data-nav-metric="阶段收益" role="tab">
                   阶段涨幅
                 </button>
@@ -325,29 +328,7 @@
               <div id="track-benchmark-control" class="track-benchmark-control">
                 <label for="track-benchmark-select">
                   <span>赛道基准</span>
-                  <select id="track-benchmark-select">
-                    <optgroup label="股票宽基">
-                      <option value="hs300">沪深300</option>
-                      <option value="csi500">中证500</option>
-                      <option value="csi800">中证800</option>
-                      <option value="csi1000">中证1000</option>
-                      <option value="csi2000">中证2000</option>
-                      <option value="chinext">创业板指</option>
-                      <option value="star50">科创50</option>
-                      <option value="csi_dividend">中证红利</option>
-                    </optgroup>
-                    <optgroup label="债券赛道">
-                      <option value="cbond_mid_short">中债中短债财富</option>
-                      <option value="cbond_mid_long">中债中长债财富</option>
-                    </optgroup>
-                    <optgroup label="货币现金">
-                      <option value="money_fund">货币基金</option>
-                    </optgroup>
-                    <optgroup label="股债组合">
-                      <option value="fixed_income_plus_80_20">偏债混合</option>
-                      <option value="equity_bond_80_20">偏股混合</option>
-                    </optgroup>
-                  </select>
+                  <select id="track-benchmark-select"></select>
                 </label>
                 <button
                   id="track-benchmark-help"
@@ -515,6 +496,52 @@
               </div>
               <div id="performance-chart" class="stage-performance-list"></div>
             </div>
+          </div>
+          <div
+            id="bull-bear-panel"
+            class="bull-bear-panel"
+            aria-label="牛熊周期对比"
+            hidden
+          >
+            <div class="bull-bear-legend">
+              <span class="fund-series" id="bull-bear-fund-legend">本基金</span>
+              <span class="benchmark-series">沪深300</span>
+              <button
+                type="button"
+                id="bull-bear-info-toggle"
+                class="bull-bear-info-toggle"
+                aria-expanded="false"
+                aria-controls="bull-bear-info"
+                title="查看各牛熊周期说明"
+              >
+                i
+              </button>
+            </div>
+            <div id="bull-bear-info" class="bull-bear-info" hidden>
+              <div class="bull-bear-info-heading">
+                <span class="section-label">CYCLE NOTES / 牛熊周期说明</span>
+                <button
+                  type="button"
+                  id="bull-bear-info-close"
+                  class="bull-bear-info-close"
+                  aria-label="关闭说明"
+                >
+                  ×
+                </button>
+              </div>
+              <div id="bull-bear-info-list" class="bull-bear-info-list"></div>
+            </div>
+            <svg
+              id="bull-bear-chart"
+              viewBox="0 0 1000 360"
+              preserveAspectRatio="none"
+              role="img"
+              aria-label="各牛熊周期内本基金与沪深300累计涨跌幅走势"
+            ></svg>
+            <div id="bull-bear-empty" class="bull-bear-empty" hidden>
+              暂无足够的净值数据用于绘制牛熊周期走势。
+            </div>
+            <p class="bull-bear-caption">上扬曲线为牛市阶段，下降曲线为熊市阶段。</p>
           </div>
           <p id="nav-chart-note" class="nav-chart-note">
             所选区间首日归零，不代表投资者从基金成立日起持有。
@@ -1409,6 +1436,6 @@
       <span>PUBLIC DATA · CLEAR VIEW</span>
     </footer>
 
-    <script src="/static/app.js?v=20260727.5" defer></script>
+    <script src="/static/app.js?v=20260728.5" defer></script>
   </body>
 </html>
