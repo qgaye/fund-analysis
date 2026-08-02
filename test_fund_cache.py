@@ -114,6 +114,21 @@ class FundFileCacheTests(unittest.TestCase):
         self.assertEqual(contents["fund_code"], "000001")
         self.assertNotIn("holdings_limit", contents)
 
+    def test_rejects_cache_from_before_manager_and_company_profile(self) -> None:
+        now = datetime(2026, 8, 2, 10, tzinfo=SHANGHAI_TZ)
+        record = self.cache.write(
+            "001717",
+            {"基础资料": {"名称": "工银前沿医疗股票A"}},
+            now=now,
+        )
+        record["version"] = 6
+        (self.cache_directory / "001717.json").write_text(
+            json.dumps(record, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        self.assertIsNone(self.cache.read("001717"))
+
 
 if __name__ == "__main__":
     unittest.main()

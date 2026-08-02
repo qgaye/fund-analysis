@@ -5,14 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="输入基金代码，查看基金基础资料、净值、阶段业绩与最新持仓。"
+      content="输入基金代码或中文名称，查看基金基础资料、净值、阶段业绩与最新持仓。"
     />
     <title>基金透镜 · Fund Lens</title>
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%23f1eddf' stroke='%23151916' stroke-width='3'/%3E%3Ctext x='32' y='38' text-anchor='middle' font-family='serif' font-size='18' font-weight='700' fill='%23151916'%3EFL%3C/text%3E%3C/svg%3E"
     />
-    <link rel="stylesheet" href="/static/styles.css?v=20260728.6" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260802.16" />
   </head>
   <body>
     <div class="paper-noise" aria-hidden="true"></div>
@@ -24,62 +24,68 @@
           <small>FUND LENS / CN</small>
         </span>
       </a>
-      <div class="live-stamp">
-        <span class="pulse-dot"></span>
-        AKShare 数据
+      <div class="header-actions">
+        <div class="live-stamp">
+          <span class="pulse-dot"></span>
+          AKShare 数据
+        </div>
+        <button
+          id="fund-search-open"
+          class="header-tool-trigger"
+          type="button"
+          aria-haspopup="dialog"
+          aria-controls="fund-search-dialog"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="10.5" cy="10.5" r="6.5" />
+            <path d="M15.5 15.5L21 21" />
+          </svg>
+          <span>查询基金</span>
+        </button>
+        <button
+          id="search-history-open"
+          class="header-tool-trigger"
+          type="button"
+          aria-haspopup="dialog"
+          aria-controls="search-history-dialog"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 7h16M4 12h16M4 17h11" />
+          </svg>
+          <span>查询历史</span>
+          <strong id="search-history-count">0</strong>
+        </button>
+        <button
+          id="watchlist-open"
+          class="header-tool-trigger"
+          type="button"
+          aria-haspopup="dialog"
+          aria-controls="watchlist-dialog"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3.8l2.53 5.13 5.67.82-4.1 4 1 5.65L12 16.73 6.9 19.4l.98-5.65-4.1-4 5.68-.82L12 3.8z" />
+          </svg>
+          <span>自选组合</span>
+          <strong id="watchlist-count">0</strong>
+        </button>
       </div>
     </header>
 
     <main>
-      <section class="hero" id="search-section">
-        <div class="search-panel">
-          <form id="fund-form" novalidate>
-            <label for="fund-code">基金代码</label>
-            <div class="input-row">
-              <input
-                id="fund-code"
-                name="fund-code"
-                type="text"
-                inputmode="numeric"
-                autocomplete="off"
-                maxlength="6"
-                pattern="[0-9]{6}"
-                placeholder="例如 000001"
-                aria-describedby="input-help"
-              />
-              <button type="submit">
-                <span>查询基金</span>
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M5 12h13M13 6l6 6-6 6" />
-                </svg>
-              </button>
-            </div>
-            <p id="input-help" class="input-help">输入完整的六位基金代码</p>
-          </form>
+      <section id="landing-state" class="landing-state" aria-labelledby="landing-title">
+        <div>
+          <p class="eyebrow">FUND RESEARCH DESK / 基金研究台</p>
+          <h1 id="landing-title">穿透一只基金，<br />看清它的风险与收益。</h1>
+          <p>
+            查询、历史与自选组合现已集中在顶栏。输入基金代码或中文名称，即可展开净值、费率、
+            业绩基准和季度持仓的完整研究视图。
+          </p>
         </div>
-
-        <div id="search-history" class="search-history" aria-label="查询历史">
-          <div class="search-history-head">
-            <span>查询历史</span>
-            <button type="button" id="search-history-clear">清空</button>
-          </div>
-          <div id="search-history-list" class="search-history-list"></div>
-          <div id="search-history-empty" class="search-history-empty">
-            <p class="eyebrow">HOW TO USE / 使用说明</p>
-            <p class="search-history-empty-lead">
-              在左侧输入六位基金代码即可查询。查询过的基金会自动记录在这里，方便下次快速回看。
-            </p>
-            <ul>
-              <li><strong>基础档案</strong>：基金类型、成立信息、管理人与费率结构。</li>
-              <li><strong>净值与收益</strong>：业绩走势、回撤修复、阶段与周期涨幅、分红记录。</li>
-              <li><strong>季度持仓</strong>：资产分布、证券与行业矩阵、持仓明细与个股估值。</li>
-              <li><strong>模拟持有</strong>：单次买入或定期投入的收益测算。</li>
-            </ul>
-            <p class="search-history-empty-tip">
-              历史记录保存在本地 Cookie 中，最多保留 12 条，点击任意记录即可再次查询。
-            </p>
-          </div>
-        </div>
+        <ol aria-label="研究能力">
+          <li><span>01</span><strong>基金档案</strong><small>类型 · 费率 · 规模</small></li>
+          <li><span>02</span><strong>收益透镜</strong><small>净值 · 回撤 · 基准</small></li>
+          <li><span>03</span><strong>持仓穿透</strong><small>资产 · 行业 · 证券</small></li>
+        </ol>
       </section>
 
       <section id="loading-state" class="loading-state" hidden aria-live="polite">
@@ -123,6 +129,26 @@
             </div>
           </div>
           <div class="fund-refresh-control">
+            <a
+              id="fund-xueqiu-link"
+              class="refresh-button xueqiu-link"
+              href="#"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="在雪球查看基金"
+              hidden
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8 16 16 8M9 8h7v7" />
+              </svg>
+              <span>雪球</span>
+            </a>
+            <button id="favorite-button" class="refresh-button favorite-button" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3.8l2.53 5.13 5.67.82-4.1 4 1 5.65L12 16.73 6.9 19.4l.98-5.65-4.1-4 5.68-.82L12 3.8z" />
+              </svg>
+              <span>收藏基金</span>
+            </button>
             <button id="copy-ai-button" class="refresh-button" type="button">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M9 9h10v12H9zM5 15H3V3h12v2" />
@@ -147,7 +173,7 @@
             </div>
             <div class="compact-profile-summary-metrics">
               <span>成立 <strong id="profile-summary-age">—</strong></span>
-              <span>管理人 <strong id="profile-summary-manager">—</strong></span>
+              <span>基金经理 <strong id="profile-summary-manager">—</strong></span>
               <span>运作费 <strong id="profile-summary-cost">—</strong></span>
               <i aria-hidden="true"></i>
             </div>
@@ -232,39 +258,89 @@
           </div>
 
           <div class="profile-research-grid">
-            <article class="profile-card management-card">
+            <article class="profile-card management-share-card">
               <div class="profile-card-heading">
-                <span class="section-label">MANAGEMENT &amp; COST</span>
-                <span>持续运作费率</span>
+                <span class="section-label">MANAGEMENT &amp; A/C COST</span>
+                <span>持续运作 + 买卖成本</span>
               </div>
-              <dl class="facts-list compact-facts">
-                <div><dt>基金管理人</dt><dd id="manager">—</dd></div>
-                <div><dt>基金托管人</dt><dd id="custodian">—</dd></div>
-                <div><dt>管理费率</dt><dd id="management-fee">—</dd></div>
-                <div><dt>托管费率</dt><dd id="custodian-fee">—</dd></div>
-              </dl>
+              <div class="management-share-layout">
+                <section class="management-cost-section">
+                  <div class="merged-section-heading">
+                    <span>FIXED OPERATING COST</span>
+                    <small>年费率</small>
+                  </div>
+                  <dl class="facts-list compact-facts management-facts">
+                    <div><dt>基金管理人</dt><dd id="manager">—</dd></div>
+                    <div><dt>基金托管人</dt><dd id="custodian">—</dd></div>
+                    <div><dt>管理费率</dt><dd id="management-fee">—</dd></div>
+                    <div><dt>托管费率</dt><dd id="custodian-fee">—</dd></div>
+                    <div class="sales-service-fact">
+                      <dt>销售服务费率</dt><dd id="sales-service-fee">—</dd>
+                    </div>
+                  </dl>
+                </section>
+
+                <section id="share-class-card" class="share-class-section" hidden>
+                  <div class="merged-section-heading">
+                    <span>A / C SHARE CLASS</span>
+                    <small id="share-class-current">—</small>
+                  </div>
+                  <div class="share-class-advice">
+                    <strong id="share-class-threshold">—</strong>
+                    <p id="share-class-summary" class="profile-note">—</p>
+                  </div>
+                  <div class="share-class-period-heading">
+                    <span>申购后赎回</span>
+                    <small>估算总费率</small>
+                  </div>
+                  <div
+                    id="share-class-periods"
+                    class="share-class-periods"
+                    aria-label="A 类与 C 类按持有期限费率比较"
+                  ></div>
+                  <dl class="facts-list compact-facts">
+                    <div>
+                      <dt>A 类费率构成</dt>
+                      <dd id="share-class-a">—</dd>
+                    </div>
+                    <div>
+                      <dt>C 类费率构成</dt>
+                      <dd id="share-class-c">—</dd>
+                    </div>
+                  </dl>
+                  <p id="share-class-note" class="profile-note">—</p>
+                </section>
+              </div>
+            </article>
+          </div>
+
+          <div class="profile-people-grid">
+            <article class="profile-card fund-manager-card">
+              <div class="profile-card-heading">
+                <span class="section-label">FUND MANAGER / 基金经理</span>
+                <span id="fund-manager-count">—</span>
+              </div>
+              <div id="fund-manager-list" class="fund-manager-list"></div>
+              <p id="fund-manager-note" class="profile-note">—</p>
             </article>
 
-            <article id="share-class-card" class="profile-card share-class-card" hidden>
+            <article class="profile-card fund-company-card">
               <div class="profile-card-heading">
-                <span class="section-label">A / C SHARE CLASS</span>
-                <span id="share-class-current">—</span>
+                <span class="section-label">FUND HOUSE / 基金公司</span>
+                <span id="fund-company-update">—</span>
               </div>
-              <div class="share-class-advice">
-                <strong id="share-class-threshold">—</strong>
-                <p id="share-class-summary" class="profile-note">—</p>
+              <div class="fund-company-lead">
+                <span id="fund-company-name">—</span>
+                <strong id="fund-company-scale">—</strong>
+                <small>全部管理规模</small>
               </div>
-              <dl class="facts-list compact-facts">
-                <div>
-                  <dt>A 类（长期）</dt>
-                  <dd id="share-class-a">—</dd>
-                </div>
-                <div>
-                  <dt>C 类（短期）</dt>
-                  <dd id="share-class-c">—</dd>
-                </div>
+              <dl class="profile-facts fund-company-facts">
+                <div><dt>成立日期</dt><dd id="fund-company-founded">—</dd></div>
+                <div><dt>成立年限</dt><dd id="fund-company-age">—</dd></div>
+                <div><dt>全部基金数</dt><dd id="fund-company-count">—</dd></div>
+                <div><dt>基金经理数</dt><dd id="fund-company-manager-count">—</dd></div>
               </dl>
-              <p id="share-class-note" class="profile-note">—</p>
+              <p class="profile-note">公司规模与数量为东方财富基金公司榜单口径。</p>
             </article>
           </div>
         </details>
@@ -421,6 +497,12 @@
               role="img"
               aria-label="基金净值与收益曲线"
             ></svg>
+            <div
+              id="drawdown-label-layer"
+              class="drawdown-label-layer"
+              aria-hidden="true"
+              hidden
+            ></div>
             <div id="nav-chart-tooltip" class="nav-chart-tooltip" hidden>
               <span></span>
               <strong></strong>
@@ -435,6 +517,14 @@
             aria-label="基金分红记录"
             hidden
           >
+            <div
+              id="dividend-frequency"
+              class="dividend-history-toolbar"
+              hidden
+            >
+              <span>DIVIDEND CADENCE / 分红规律</span>
+              <strong id="dividend-frequency-badge"></strong>
+            </div>
             <div class="dividend-list-heading">
               <span>除息日期</span>
               <span>每份现金分红</span>
@@ -493,6 +583,28 @@
                 <span>基金涨幅</span>
                 <span id="stage-benchmark-heading">赛道涨幅</span>
                 <span>相对赛道</span>
+                <span class="stage-metric-heading">
+                  夏普比率
+                  <button
+                    class="metric-help-trigger"
+                    type="button"
+                    data-metric-help="夏普比率"
+                    aria-label="查看夏普比率说明"
+                    aria-haspopup="dialog"
+                    aria-controls="metric-help-dialog"
+                  >i</button>
+                </span>
+                <span class="stage-metric-heading">
+                  卡玛比率
+                  <button
+                    class="metric-help-trigger"
+                    type="button"
+                    data-metric-help="卡玛比率"
+                    aria-label="查看卡玛比率说明"
+                    aria-haspopup="dialog"
+                    aria-controls="metric-help-dialog"
+                  >i</button>
+                </span>
               </div>
               <div id="performance-chart" class="stage-performance-list"></div>
             </div>
@@ -975,6 +1087,162 @@
     </main>
 
     <dialog
+      id="fund-search-dialog"
+      class="utility-dialog search-utility-dialog"
+      aria-labelledby="fund-search-title"
+    >
+      <div class="utility-sheet search-utility-sheet">
+        <button
+          id="fund-search-close"
+          class="utility-close"
+          type="button"
+          aria-label="关闭基金查询"
+        >
+          <span>关闭</span>
+          <b aria-hidden="true">×</b>
+        </button>
+        <header class="utility-heading search-utility-heading">
+          <p class="eyebrow">FUND LOOKUP / 基金查询</p>
+          <h2 id="fund-search-title">从代码开始研究</h2>
+          <p>输入基金代码、中文名称或拼音，在本地全量目录中快速找到目标基金。</p>
+        </header>
+        <form id="fund-form" class="utility-search-form" novalidate>
+          <label for="fund-code">基金代码或名称</label>
+          <div class="input-row">
+            <input
+              id="fund-code"
+              name="fund-code"
+              type="search"
+              autocomplete="off"
+              maxlength="80"
+              placeholder="例如 000001 / 华夏成长"
+              aria-describedby="input-help"
+              aria-autocomplete="list"
+              aria-controls="fund-search-suggestions"
+              aria-expanded="false"
+            />
+            <button type="submit">
+              <span>查询基金</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 12h13M13 6l6 6-6 6" />
+              </svg>
+            </button>
+          </div>
+          <div
+            id="fund-search-suggestions"
+            class="fund-search-suggestions"
+            role="listbox"
+            aria-label="基金搜索建议"
+            hidden
+          >
+            <div class="fund-search-suggestion-head">
+              <span>LOCAL FUND DIRECTORY / 本地基金目录</span>
+              <small id="fund-search-match-count"></small>
+            </div>
+            <div id="fund-search-suggestion-list"></div>
+          </div>
+          <p id="input-help" class="input-help">支持六位代码、中文名称及拼音首字母</p>
+        </form>
+        <footer class="utility-footnote">
+          <span>TIP 01</span>
+          <p>查询完成后会自动加入“查询历史”；需要长期跟踪的基金可再加入自选组合。</p>
+        </footer>
+      </div>
+    </dialog>
+
+    <dialog
+      id="search-history-dialog"
+      class="utility-dialog history-utility-dialog"
+      aria-labelledby="search-history-title"
+    >
+      <div class="utility-sheet history-utility-sheet">
+        <button
+          id="search-history-close"
+          class="utility-close"
+          type="button"
+          aria-label="关闭查询历史"
+        >
+          <span>关闭</span>
+          <b aria-hidden="true">×</b>
+        </button>
+        <header class="utility-heading history-utility-heading">
+          <p class="eyebrow">RECENT RESEARCH / 查询历史</p>
+          <div>
+            <h2 id="search-history-title">最近查看</h2>
+            <button type="button" id="search-history-clear">清空历史</button>
+          </div>
+          <p>保留最近 12 条本地查询记录，点击任意基金即可重新打开研究视图。</p>
+        </header>
+        <div id="search-history" class="search-history" aria-label="查询历史">
+          <div id="search-history-list" class="search-history-list"></div>
+          <div id="search-history-empty" class="search-history-empty">
+            <p class="eyebrow">NO RECENT LOOKUPS / 暂无记录</p>
+            <p class="search-history-empty-lead">
+              还没有查询过基金。关闭此窗口，点击顶栏“查询基金”输入六位代码。
+            </p>
+            <p class="search-history-empty-tip">
+              历史记录保存在本地 Cookie 中，最多保留 12 条。
+            </p>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog
+      id="watchlist-dialog"
+      class="watchlist-dialog"
+      aria-labelledby="watchlist-title"
+    >
+      <div class="watchlist-sheet">
+        <button
+          id="watchlist-close"
+          class="watchlist-close"
+          type="button"
+          aria-label="关闭自选组合"
+        >
+          <span>关闭</span>
+          <b aria-hidden="true">×</b>
+        </button>
+
+        <header class="watchlist-heading">
+          <p class="eyebrow">LOCAL PORTFOLIO / 本地自选</p>
+          <div class="watchlist-title-line">
+            <h2 id="watchlist-title">我的自选组合</h2>
+            <span id="watchlist-total">0 FUNDS</span>
+          </div>
+          <p>
+            把值得持续观察的基金收进同一份研究清单。名称与分类可以自由编辑，数据只写入本机
+            <code>.data/watchlist.json</code>。
+          </p>
+        </header>
+
+        <section class="watchlist-toolbar" aria-label="自选基金分类筛选">
+          <div id="watchlist-filters" class="watchlist-filters"></div>
+          <span id="watchlist-feedback" class="watchlist-feedback" aria-live="polite"></span>
+        </section>
+
+        <section id="watchlist-list" class="watchlist-list" aria-live="polite"></section>
+        <section id="watchlist-empty" class="watchlist-empty" hidden>
+          <span aria-hidden="true">☆</span>
+          <div>
+            <p class="eyebrow">NO FUNDS SAVED / 尚无收藏</p>
+            <h3>从一只正在研究的基金开始。</h3>
+            <p>查询基金后，点击档案右侧的“收藏基金”，它会自动出现在这里。</p>
+          </div>
+        </section>
+
+        <datalist id="watchlist-category-options">
+          <option value="债基"></option>
+          <option value="偏股"></option>
+          <option value="指数"></option>
+          <option value="货币"></option>
+          <option value="QDII"></option>
+          <option value="其他"></option>
+        </datalist>
+      </div>
+    </dialog>
+
+    <dialog
       id="stock-detail-dialog"
       class="stock-detail-dialog"
       aria-labelledby="stock-detail-name"
@@ -1025,6 +1293,20 @@
               <small id="stock-detail-change">—</small>
               <time id="stock-detail-price-date">行情日期暂无</time>
               <div class="stock-refresh-control">
+                <a
+                  id="stock-xueqiu-link"
+                  class="xueqiu-link"
+                  href="#"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="在雪球查看股票"
+                  hidden
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M8 16 16 8M9 8h7v7" />
+                  </svg>
+                  <span>雪球</span>
+                </a>
                 <button id="stock-detail-refresh" type="button">
                   <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M20 7v5h-5M4 17v-5h5" />
@@ -1191,6 +1473,80 @@
     </dialog>
 
     <dialog
+      id="bond-structure-help-dialog"
+      class="metric-help-dialog bond-structure-help-dialog"
+      aria-labelledby="bond-structure-help-title"
+    >
+      <div class="metric-help-sheet bond-structure-help-sheet">
+        <button
+          id="bond-structure-help-close"
+          class="metric-help-close"
+          type="button"
+          aria-label="关闭债券类别说明"
+        >
+          <span>关闭</span>
+          <b aria-hidden="true">×</b>
+        </button>
+
+        <header class="bond-guide-heading">
+          <div>
+            <p id="bond-guide-eyebrow" class="eyebrow">
+              BOND TYPE FIELD GUIDE / 债券类别说明
+            </p>
+            <h2 id="bond-structure-help-title">债券类别</h2>
+            <p id="bond-guide-introduction">—</p>
+          </div>
+          <div class="bond-guide-exposure" aria-label="该类别占基金净值比例">
+            <span>本期组合暴露</span>
+            <strong id="bond-guide-weight">—</strong>
+            <small id="bond-guide-dimension">债券品种</small>
+          </div>
+        </header>
+
+        <div class="bond-guide-content">
+          <section class="bond-guide-facts" aria-label="类别特点与收益风险">
+            <article>
+              <span>01 / PROFILE</span>
+              <h3>主要特点</h3>
+              <p id="bond-guide-features">—</p>
+            </article>
+            <article class="return">
+              <span>02 / RETURN</span>
+              <h3>收益来源</h3>
+              <p id="bond-guide-return">—</p>
+            </article>
+            <article class="risk">
+              <span>03 / RISK</span>
+              <h3>核心风险</h3>
+              <p id="bond-guide-risk">—</p>
+            </article>
+            <article>
+              <span>04 / WATCH</span>
+              <h3>观察重点</h3>
+              <p id="bond-guide-watch">—</p>
+            </article>
+          </section>
+
+          <aside class="bond-guide-reading">
+            <div>
+              <span>PORTFOLIO READING / 组合解读</span>
+              <p id="bond-guide-portfolio">—</p>
+            </div>
+            <div class="bond-guide-risk-badge">
+              <span>相对风险特征</span>
+              <strong id="bond-guide-risk-level">—</strong>
+            </div>
+          </aside>
+
+          <p class="bond-guide-disclaimer">
+            以上为品种层面的通用投资者教育说明，不代表对具体债券的评级、收益预测或投资建议。
+            同一类别内仍会因发行人、期限、条款、担保、流动性和市场价格不同而呈现显著差异。
+          </p>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog
       id="metric-help-dialog"
       class="metric-help-dialog"
       aria-labelledby="metric-help-title"
@@ -1210,8 +1566,8 @@
           <p class="eyebrow">METRIC FIELD GUIDE / 指标阅读指南</p>
           <h2 id="metric-help-title">这些数字，应该怎么看？</h2>
           <p>
-            估值指标不是单独的买卖信号。优先与同一行业、相近商业模式和自身历史区间比较，
-            再结合盈利质量、负债与行业周期判断。
+            指标不是单独的买卖信号。估值指标应优先做同行比较；风险收益指标应使用相同阶段、
+            数据频率和计算口径比较，再结合基金策略与市场环境判断。
           </p>
           <nav class="metric-help-nav" aria-label="快速查看指标说明">
             <button type="button" data-metric-help="PE">PE</button>
@@ -1219,6 +1575,8 @@
             <button type="button" data-metric-help="ROE">ROE</button>
             <button type="button" data-metric-help="股息率">股息率</button>
             <button type="button" data-metric-help="换手率">换手率</button>
+            <button type="button" data-metric-help="夏普比率">夏普比率</button>
+            <button type="button" data-metric-help="卡玛比率">卡玛比率</button>
           </nav>
         </header>
 
@@ -1373,6 +1731,66 @@
             </dl>
           </article>
 
+          <article id="metric-help-sharpe" data-metric-help-card="夏普比率">
+            <header>
+              <span>06 / SHARPE RATIO</span>
+              <div>
+                <h3>夏普比率 · Sharpe Ratio</h3>
+                <p>基金每承担一单位净值波动，获得了多少超额收益。</p>
+              </div>
+            </header>
+            <dl>
+              <div>
+                <dt>怎么算</dt>
+                <dd><code>夏普比率 =（复合年化收益率 − 2%）÷ 年化波动率</code>。</dd>
+              </div>
+              <div>
+                <dt>怎么看</dt>
+                <dd>
+                  数值越高，通常表示单位波动对应的超额收益越多；负值表示区间年化收益低于
+                  2% 无风险利率假设。本项目将比率达到 1 标记为“良好”，达到 2 标记为“优秀”。
+                </dd>
+              </div>
+              <div>
+                <dt>项目口径</dt>
+                <dd>
+                  仅统计近 1 年、近 3 年和近 5 年，按对应累计收益率日序列计算；
+                  波动率按每年 252 个交易日年化，无风险利率固定为 2%。
+                </dd>
+              </div>
+            </dl>
+          </article>
+
+          <article id="metric-help-calmar" data-metric-help-card="卡玛比率">
+            <header>
+              <span>07 / CALMAR RATIO</span>
+              <div>
+                <h3>卡玛比率 · Calmar Ratio</h3>
+                <p>基金每承担一单位最大回撤，获得了多少年化收益。</p>
+              </div>
+            </header>
+            <dl>
+              <div>
+                <dt>怎么算</dt>
+                <dd><code>卡玛比率 = 复合年化收益率 ÷ |区间最大回撤|</code>。</dd>
+              </div>
+              <div>
+                <dt>怎么看</dt>
+                <dd>
+                  数值越高，通常表示收益相对于最深亏损更有吸引力；负值代表阶段年化收益为负。
+                  本项目将比率达到 1 标记为“良好”，达到 2 标记为“优秀”。
+                </dd>
+              </div>
+              <div>
+                <dt>项目口径</dt>
+                <dd>
+                  仅统计近 1 年、近 3 年和近 5 年；年化收益与最大回撤均取自对应阶段的
+                  累计收益率序列。数据不足或阶段内没有有效回撤时显示“—”。
+                </dd>
+              </div>
+            </dl>
+          </article>
+
           <aside class="metric-help-portfolio-note">
             <span>PORTFOLIO METHOD / 组合口径</span>
             <p>
@@ -1453,6 +1871,6 @@
       <span>PUBLIC DATA · CLEAR VIEW</span>
     </footer>
 
-    <script src="/static/app.js?v=20260728.6" defer></script>
+    <script src="/static/app.js?v=20260802.18" defer></script>
   </body>
 </html>

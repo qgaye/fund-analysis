@@ -8,12 +8,19 @@ import hashlib
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+)
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from benchmark_cache import BenchmarkFileCache
 from fund_ai_summary import build_ai_summary
@@ -29,9 +36,11 @@ from fund_lookup import (
     FundLookupError,
     get_fund_data,
     get_fund_holdings_by_period,
+    search_funds,
 )
 from stock_cache import StockFileCache
 from stock_lookup import StockLookupError, get_stock_data
+from watchlist_store import WatchlistFileStore
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -60,6 +69,36 @@ _stock_file_cache = StockFileCache(
     BASE_DIR / ".cache" / "stocks",
 )
 _stock_request_locks: dict[str, asyncio.Lock] = {}
+_watchlist_store = WatchlistFileStore(BASE_DIR / ".data" / "watchlist.json")
+WATCHLIST_CATEGORY_SUGGESTIONS = ["债基", "偏股", "指数", "货币", "QDII", "其他"]
+
+
+class WatchlistFundInput(BaseModel):
+    """收藏基金可由基金详情自动填充，也允许用户自定义显示信息。"""
+
+    name: str = Field(default="", max_length=120)
+    fund_type: str = Field(default="", max_length=80)
+    category: str = Field(default="未分类", max_length=40)
+    custom_name: str = Field(default="", max_length=80)
+
+
+def _clean_watchlist_text(value: str, *, fallback: str = "") -> str:
+    cleaned = " ".join(value.strip().split())
+    return cleaned or fallback
+
+
+def _watchlist_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        storage_file = str(_watchlist_store.path.relative_to(BASE_DIR))
+    except ValueError:
+        storage_file = str(_watchlist_store.path)
+    return {
+        "基金": payload.get("funds", []),
+        "总数": len(payload.get("funds", [])),
+        "更新时间": payload.get("updated_at"),
+        "分类建议": WATCHLIST_CATEGORY_SUGGESTIONS,
+        "存储文件": storage_file,
+    }
 
 
 def _benchmark_response(
@@ -144,6 +183,61 @@ async def index() -> FileResponse:
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/watchlist", summary="读取本地自选基金组合")
+async def watchlist_detail() -> dict[str, Any]:
+    try:
+        return _watchlist_payload(_watchlist_store.read())
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.put("/api/watchlist/{fund_code}", summary="收藏或更新一只自选基金")
+async def watchlist_upsert(
+    fund_code: str,
+    fund: WatchlistFundInput,
+) -> dict[str, Any]:
+    code = fund_code.strip()
+    if not re.fullmatch(r"\d{6}", code):
+        raise HTTPException(
+            status_code=422,
+            detail="基金代码必须是 6 位数字，例如 000001。",
+        )
+    name = _clean_watchlist_text(fund.name)
+    fund_type = _clean_watchlist_text(fund.fund_type)
+    category = _clean_watchlist_text(fund.category, fallback="未分类")
+    custom_name = _clean_watchlist_text(fund.custom_name)
+    try:
+        item, payload = _watchlist_store.upsert(
+            code,
+            name=name,
+            fund_type=fund_type,
+            category=category,
+            custom_name=custom_name,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    response = _watchlist_payload(payload)
+    response["基金项"] = item
+    return response
+
+
+@app.delete("/api/watchlist/{fund_code}", summary="从自选组合移除一只基金")
+async def watchlist_remove(fund_code: str) -> dict[str, Any]:
+    code = fund_code.strip()
+    if not re.fullmatch(r"\d{6}", code):
+        raise HTTPException(
+            status_code=422,
+            detail="基金代码必须是 6 位数字，例如 000001。",
+        )
+    try:
+        removed, payload = _watchlist_store.remove(code)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    response = _watchlist_payload(payload)
+    response["已移除"] = removed
+    return response
 
 
 @app.get("/api/benchmarks", summary="赛道基准目录")
@@ -320,6 +414,26 @@ async def _load_fund_record(
         return record, "MISS"
 
 
+@app.get("/api/funds/search", summary="按代码或名称搜索本地基金目录")
+async def fund_search(
+    q: str = Query(
+        ...,
+        min_length=1,
+        max_length=80,
+        description="基金代码、中文名称或拼音",
+    ),
+    limit: int = Query(default=10, ge=1, le=30),
+) -> dict[str, Any]:
+    try:
+        result = await run_in_threadpool(search_funds, q, limit)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"本地基金目录搜索失败：{exc}",
+        ) from exc
+    return {"查询": q.strip(), **result}
+
+
 @app.get(
     "/api/funds/{fund_code}",
     summary="查询单只基金",
@@ -369,6 +483,29 @@ async def fund_ai_summary(fund_code: str) -> PlainTextResponse:
             "X-Cache-Status": "STALE" if record.get("stale") else "FRESH",
             "X-Next-Refresh": str(record.get("next_refresh_at") or ""),
         },
+    )
+
+
+@app.get(
+    "/api/bonds/official-link",
+    summary="使用 Google 搜索债券",
+    include_in_schema=False,
+)
+async def bond_official_link(
+    name: str = Query(default="", max_length=80),
+    code: str = Query(default="", max_length=24),
+) -> RedirectResponse:
+    bond_name = " ".join(name.strip().split())
+    bond_code = code.strip()
+    if not bond_name and not bond_code:
+        raise HTTPException(status_code=422, detail="债券名称和代码不能同时为空。")
+    if bond_code and not re.fullmatch(r"[A-Za-z0-9.]+", bond_code):
+        raise HTTPException(status_code=422, detail="债券代码格式不正确。")
+
+    query = " ".join(value for value in (bond_name, bond_code) if value)
+    return RedirectResponse(
+        f"https://www.google.com/search?q={quote(query, safe='')}",
+        status_code=302,
     )
 
 

@@ -150,6 +150,225 @@ def _fund_age(found_date: Any, today: date | None = None) -> str | None:
     return f"{remaining_months}个月"
 
 
+def _absolute_eastmoney_url(value: Any) -> str | None:
+    url = str(value or "").strip()
+    if not url:
+        return None
+    if url.startswith("//"):
+        return f"https:{url}"
+    if url.startswith("/"):
+        return f"https://fund.eastmoney.com{url}"
+    return url
+
+
+def _parse_fund_manager_index(page_html: str) -> list[dict[str, Any]]:
+    """解析单基金 F10 页中的现任经理入口和上任日期。"""
+    soup = BeautifulSoup(page_html, features="html.parser")
+    managers: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for intro in soup.select("div.jl_intro"):
+        manager_link = intro.find(
+            "a", href=re.compile(r"/manager/(?P<id>\d+)\.html")
+        )
+        if manager_link is None:
+            continue
+        id_match = re.search(
+            r"/manager/(\d+)\.html", manager_link.get("href", "")
+        )
+        if not id_match or id_match.group(1) in seen_ids:
+            continue
+        manager_id = id_match.group(1)
+        text_block = intro.select_one("div.text")
+        text_value = text_block.get_text(" ", strip=True) if text_block else ""
+        name_match = re.search(r"姓名[：:]\s*([^\s]+)", text_value)
+        start_match = re.search(r"上任日期[：:]\s*(\d{4}-\d{2}-\d{2})", text_value)
+        name = name_match.group(1) if name_match else manager_link.get_text(strip=True)
+        biography = None
+        if text_block:
+            for paragraph in text_block.find_all("p", recursive=False):
+                paragraph_text = paragraph.get_text(" ", strip=True)
+                if paragraph_text and not re.search(
+                    r"^(姓名|上任日期|查看更多)", paragraph_text
+                ):
+                    biography = paragraph_text
+                    break
+        image = intro.find("img")
+        managers.append(
+            {
+                "经理ID": manager_id,
+                "姓名": name or None,
+                "上任日期": start_match.group(1) if start_match else None,
+                "简介": biography,
+                "照片": _absolute_eastmoney_url(
+                    image.get("src") if image is not None else None
+                ),
+                "详情链接": f"https://fund.eastmoney.com/manager/{manager_id}.html",
+            }
+        )
+        seen_ids.add(manager_id)
+    return managers
+
+
+def _parse_manager_profile(
+    page_html: str, fund_code: str
+) -> dict[str, Any]:
+    """解析经理档案，并定位其在当前基金上的任职记录。"""
+    soup = BeautifulSoup(page_html, features="html.parser")
+    profile: dict[str, Any] = {}
+
+    name = soup.select_one("#name_1")
+    if name is not None:
+        profile["姓名"] = name.get_text(" ", strip=True) or None
+
+    summary = soup.select_one("div.jlinfo div.right.jd")
+    summary_text = summary.get_text(" ", strip=True) if summary else ""
+    field_patterns = {
+        "从业年限": r"累计任职时间[：:]\s*([^\s]+)",
+        "从业起始日": r"任职起始日期[：:]\s*(\d{4}-\d{2}-\d{2})",
+    }
+    for key, pattern in field_patterns.items():
+        match = re.search(pattern, summary_text)
+        if match:
+            profile[key] = match.group(1)
+
+    company_link = (
+        summary.find("a", href=re.compile(r"/company/\d+\.html"))
+        if summary
+        else None
+    )
+    if company_link is not None:
+        company_id = re.search(
+            r"/company/(\d+)\.html", company_link.get("href", "")
+        )
+        profile["所属公司"] = company_link.get_text(" ", strip=True) or None
+        profile["公司ID"] = company_id.group(1) if company_id else None
+
+    scale = soup.select_one("div.gmlefts span.redText")
+    if scale is not None:
+        profile["现任基金资产总规模"] = _clean(
+            pd.to_numeric(
+                scale.get_text(strip=True).replace(",", ""),
+                errors="coerce",
+            )
+        )
+        profile["现任基金资产总规模单位"] = "亿元"
+
+    biography = soup.select_one("div.jlinfo div.right.ms p")
+    if biography is not None:
+        biography_text = biography.get_text(" ", strip=True)
+        profile["简介"] = re.sub(
+            r"^基金经理简介[：:]\s*", "", biography_text
+        ) or None
+
+    normalized_code = str(fund_code).zfill(6)
+    for row in soup.select("table tr"):
+        fund_link = row.find(
+            "a", href=re.compile(rf"/{re.escape(normalized_code)}\.html(?:$|[?#])")
+        )
+        if fund_link is None:
+            continue
+        cells = row.find_all("td", recursive=False)
+        if len(cells) < 8:
+            continue
+        profile["本基金任职区间"] = cells[5].get_text(" ", strip=True) or None
+        profile["本基金任期"] = cells[6].get_text(" ", strip=True) or None
+        profile["本基金任职回报"] = cells[7].get_text(" ", strip=True) or None
+        break
+    return profile
+
+
+def _load_fund_managers(
+    code: str, warnings: list[str]
+) -> dict[str, Any]:
+    """读取现任经理，并以经理个人档案补充从业和本基金任期。"""
+    try:
+        response = requests.get(
+            f"https://fundf10.eastmoney.com/jjjl_{code}.html",
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=20,
+        )
+        response.raise_for_status()
+        response.encoding = response.apparent_encoding or "utf-8"
+        managers = _parse_fund_manager_index(response.text)
+    except Exception as exc:
+        warnings.append(f"基金经理获取失败：{exc}")
+        return {}
+
+    if not managers:
+        warnings.append("基金经理获取失败：未找到现任基金经理。")
+        return {}
+
+    def enrich(manager: dict[str, Any]) -> dict[str, Any]:
+        manager_id = manager["经理ID"]
+        try:
+            detail_response = requests.get(
+                f"https://fund.eastmoney.com/manager/{manager_id}.html",
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=20,
+            )
+            detail_response.raise_for_status()
+            detail_response.encoding = (
+                detail_response.apparent_encoding or "utf-8"
+            )
+            detail = _parse_manager_profile(detail_response.text, code)
+            return {**manager, **{k: v for k, v in detail.items() if v is not None}}
+        except Exception as exc:
+            warnings.append(
+                f"基金经理 {manager.get('姓名') or manager_id} 档案获取失败：{exc}"
+            )
+            return manager
+
+    with ThreadPoolExecutor(max_workers=min(4, len(managers))) as executor:
+        current = list(executor.map(enrich, managers))
+    return {
+        "数量": len(current),
+        "现任": current,
+        "从业口径": "天天基金经理档案的累计任职时间",
+        "任期口径": "现任经理在本基金的起始日、任职天数和任职回报",
+    }
+
+
+def _extract_fund_company(
+    company_frame: pd.DataFrame, company_name: Any
+) -> dict[str, Any]:
+    """从东方财富基金公司榜单中匹配单家基金公司的经营概览。"""
+    name = str(company_name or "").strip()
+    company: dict[str, Any] = {"名称": name or None}
+    if company_frame.empty or not name or "基金公司" not in company_frame.columns:
+        return company
+    names = company_frame["基金公司"].astype(str).str.strip()
+
+    def normalize_company_name(value: str) -> str:
+        normalized_value = re.sub(
+            r"(?:股份)?有限公司$", "", value.strip()
+        )
+        return re.sub(r"管理$", "", normalized_value)
+
+    matches = company_frame[names.eq(name)]
+    if matches.empty:
+        normalized = normalize_company_name(name)
+        matches = company_frame[
+            names.map(normalize_company_name).eq(normalized)
+        ]
+    if matches.empty:
+        return company
+    row = matches.iloc[0]
+    founded = _clean(row.get("成立时间"))
+    company.update(
+        {
+            "名称": _clean(row.get("基金公司")) or name,
+            "成立日期": founded,
+            "成立时间": _fund_age(founded),
+            "管理规模": _clean(row.get("全部管理规模")),
+            "管理规模单位": "亿元",
+            "基金数量": _clean(row.get("全部基金数")),
+            "基金经理数量": _clean(row.get("全部经理数")),
+            "更新日期": _clean(row.get("更新日期")),
+        }
+    )
+    return company
+
+
 def _extract_scale_details(
     overview: dict[str, Any], xq: dict[str, Any]
 ) -> dict[str, Any]:
@@ -340,6 +559,72 @@ def _load_purchase_fee(
     return fees
 
 
+def _parse_holding_period_bounds(condition: Any) -> tuple[int, int | None] | None:
+    """把赎回费率的中文持有期限转换为闭区间天数。"""
+    text = re.sub(r"\s+", "", str(condition or ""))
+    if not text:
+        return None
+    text = (
+        text.replace("日", "天")
+        .replace("（", "(")
+        .replace("）", ")")
+        .replace("＜", "<")
+        .replace("＞", ">")
+        .replace("≤", "<=")
+        .replace("≥", ">=")
+    )
+    # “7天以上（含7天）”中的括注不改变边界，先移除以简化匹配。
+    text = re.sub(r"\(含(?:\d+天)?\)", "", text)
+
+    lower: int | None = None
+    upper: int | None = None
+
+    direct_range = re.search(r"(\d+)天(?:至|到|[-—~～])(\d+)天", text)
+    if direct_range:
+        lower = int(direct_range.group(1))
+        upper = int(direct_range.group(2))
+
+    lower_patterns = (
+        (r"(?:大于等于|不少于|至少)(\d+)天", 0),
+        (r"(\d+)天(?:以上|及以上)", 0),
+        (r"(?:持有期限|持有期|天数|N|n)?(?:>=)(\d+)天?", 0),
+        (r"(\d+)天?(?:<=)(?:持有期限|持有期|天数|N|n)", 0),
+        (r"(?:大于|超过)(\d+)天", 1),
+        (r"(?:持有期限|持有期|天数|N|n)?(?:>)(\d+)天?", 1),
+        (r"(\d+)天?(?:<)(?:持有期限|持有期|天数|N|n)", 1),
+    )
+    upper_patterns = (
+        (r"(?:小于等于|不超过|至多)(\d+)天", 0),
+        (r"(\d+)天(?:以内|以下|及以下)", 0),
+        (r"(?:持有期限|持有期|天数|N|n)?(?:<=)(\d+)天?", 0),
+        (r"(\d+)天?(?:>=)(?:持有期限|持有期|天数|N|n)", 0),
+        (r"(?:小于|少于|未满)(\d+)天", -1),
+        (r"(?:持有期限|持有期|天数|N|n)?(?:<)(\d+)天?", -1),
+        (r"(\d+)天?(?:>)(?:持有期限|持有期|天数|N|n)", -1),
+    )
+    for pattern, adjustment in lower_patterns:
+        match = re.search(pattern, text)
+        if match:
+            lower = int(match.group(1)) + adjustment
+            break
+    for pattern, adjustment in upper_patterns:
+        match = re.search(pattern, text)
+        if match:
+            upper = int(match.group(1)) + adjustment
+            break
+
+    if lower is None and upper is None:
+        exact = re.fullmatch(r"(?:持有)?(\d+)天", text)
+        if exact:
+            lower = upper = int(exact.group(1))
+        else:
+            return None
+    lower = max(lower or 1, 1)
+    if upper is not None and upper < lower:
+        return None
+    return lower, upper
+
+
 def _parse_redeem_fee_table(frame: pd.DataFrame) -> dict[str, Any]:
     """把赎回费率表整理成不同持有周期的分档结构。"""
     if frame.empty:
@@ -355,12 +640,11 @@ def _parse_redeem_fee_table(frame: pd.DataFrame) -> dict[str, Any]:
         rate = _pick(row.get("赎回费率"), row.get("费率"), row.get("原费率"))
         if not any((condition, rate)):
             continue
-        details.append(
-            {
-                "适用条件": condition,
-                "赎回费率": rate,
-            }
-        )
+        detail = {"适用条件": condition, "赎回费率": rate}
+        bounds = _parse_holding_period_bounds(condition)
+        if bounds:
+            detail["起始天数"], detail["结束天数"] = bounds
+        details.append(detail)
     if not details:
         return {}
     return {
@@ -453,6 +737,105 @@ def _fund_name_directory_for(month_tag: str) -> pd.DataFrame:
     return frame.dropna(subset=["基金代码"])
 
 
+def _compact_search_text(value: Any) -> str:
+    """搜索用标准化：忽略空白和常见分隔符，英文统一为大写。"""
+
+    return re.sub(r"[\s\-_/·（）()]+", "", str(value or "")).upper()
+
+
+def _subsequence_gap(query: str, target: str) -> int | None:
+    """返回字符顺序匹配的间隔成本；无法按顺序匹配时返回 None。"""
+
+    cursor = -1
+    gap = 0
+    for character in query:
+        found = target.find(character, cursor + 1)
+        if found < 0:
+            return None
+        if cursor >= 0:
+            gap += found - cursor - 1
+        cursor = found
+    return gap
+
+
+@lru_cache(maxsize=2)
+def _fund_search_catalog_for(month_tag: str) -> tuple[dict[str, str], ...]:
+    frame = _fund_name_em_frame(month_tag)
+    if frame is None or frame.empty:
+        return ()
+    catalog: list[dict[str, str]] = []
+    for _, row in frame.iterrows():
+        code = str(_clean(row.get("基金代码")) or "").strip().zfill(6)
+        name = str(_clean(row.get("基金简称")) or "").strip()
+        if not re.fullmatch(r"\d{6}", code) or not name:
+            continue
+        catalog.append(
+            {
+                "code": code,
+                "name": name,
+                "fund_type": str(_clean(row.get("基金类型")) or "").strip(),
+                "code_search": _compact_search_text(code),
+                "name_search": _compact_search_text(name),
+                "pinyin_short": _compact_search_text(_clean(row.get("拼音缩写"))),
+                "pinyin_full": _compact_search_text(_clean(row.get("拼音全称"))),
+            }
+        )
+    return tuple(catalog)
+
+
+def search_funds(query: str, limit: int = 10) -> dict[str, Any]:
+    """在月度本地基金名录中按代码、中文名称或拼音做模糊搜索。"""
+
+    normalized = _compact_search_text(query)
+    if not normalized:
+        return {"基金": [], "匹配总数": 0, "目录月份": None}
+    month_tag = datetime.now().strftime("%Y%m")
+    matches: list[tuple[tuple[int, int, int, str], dict[str, str]]] = []
+    for item in _fund_search_catalog_for(month_tag):
+        code = item["code_search"]
+        name = item["name_search"]
+        pinyin_short = item["pinyin_short"]
+        pinyin_full = item["pinyin_full"]
+        score: tuple[int, int, int, str] | None = None
+
+        if normalized == code or normalized == name:
+            score = (0, 0, len(name), code)
+        elif code.startswith(normalized):
+            score = (1, 0, len(code) - len(normalized), code)
+        elif name.startswith(normalized):
+            score = (1, 1, len(name) - len(normalized), code)
+        elif normalized in name:
+            score = (2, name.index(normalized), len(name), code)
+        elif pinyin_short.startswith(normalized):
+            score = (3, 0, len(pinyin_short), code)
+        elif pinyin_full.startswith(normalized):
+            score = (3, 1, len(pinyin_full), code)
+        elif normalized in pinyin_short or normalized in pinyin_full:
+            score = (4, 0, len(name), code)
+        elif len(normalized) >= 2:
+            gap = _subsequence_gap(normalized, name)
+            if gap is not None:
+                score = (5, gap, len(name), code)
+
+        if score is not None:
+            matches.append((score, item))
+
+    matches.sort(key=lambda match: match[0])
+    funds = [
+        {
+            "代码": item["code"],
+            "名称": item["name"],
+            "类型": item["fund_type"],
+        }
+        for _, item in matches[: max(1, min(int(limit), 30))]
+    ]
+    return {
+        "基金": funds,
+        "匹配总数": len(matches),
+        "目录月份": month_tag,
+    }
+
+
 # A / C 后缀识别：匹配名称结尾的份额类别标记，如 “……混合A”“……债券C”。
 _SHARE_CLASS_PATTERN = re.compile(r"^(?P<base>.+?)([ 　\-]*)(?P<cls>[AC])$")
 
@@ -529,14 +912,191 @@ def _first_percent(*values: Any) -> float | None:
     return None
 
 
+def _purchase_fee_rate(fees: dict[str, Any] | None) -> float | None:
+    """读取小额申购首档费率，优先使用渠道优惠费率。"""
+    rows = (fees or {}).get("明细") or []
+    if not rows:
+        return None
+    return _first_percent(
+        rows[0].get("天天基金优惠费率"), rows[0].get("原费率")
+    )
+
+
+def _redemption_fee_schedule(
+    fees: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """把赎回费率明细转换为可按自然日查询的区间。"""
+    schedule: list[dict[str, Any]] = []
+    for row in (fees or {}).get("明细") or []:
+        rate = _first_percent(row.get("赎回费率"))
+        start = row.get("起始天数")
+        end = row.get("结束天数")
+        if start is None:
+            bounds = _parse_holding_period_bounds(row.get("适用条件"))
+            if bounds:
+                start, end = bounds
+        if rate is None or start is None:
+            continue
+        schedule.append(
+            {
+                "起始天数": max(int(start), 1),
+                "结束天数": int(end) if end is not None else None,
+                "赎回费率": rate,
+            }
+        )
+    return sorted(schedule, key=lambda item: item["起始天数"])
+
+
+def _redemption_rate_at_day(
+    schedule: list[dict[str, Any]], holding_days: int
+) -> float | None:
+    for row in schedule:
+        end = row["结束天数"]
+        if row["起始天数"] <= holding_days and (
+            end is None or holding_days <= end
+        ):
+            return float(row["赎回费率"])
+    return None
+
+
+def _holding_period_label(start: int, end: int | None) -> str:
+    if end is None:
+        return f"{start} 天以上"
+    if start == end:
+        return f"第 {start} 天"
+    return f"{start}–{end} 天"
+
+
+def _compare_share_class_costs(
+    *,
+    a_purchase_rate: float,
+    c_purchase_rate: float,
+    a_sales_rate: float,
+    c_sales_rate: float,
+    a_redeem_fee: dict[str, Any],
+    c_redeem_fee: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """按持有自然日合并申购、赎回和销售服务费，并压缩为连续区间。"""
+    a_schedule = _redemption_fee_schedule(a_redeem_fee)
+    c_schedule = _redemption_fee_schedule(c_redeem_fee)
+    if not a_schedule or not c_schedule:
+        return []
+
+    all_rows = a_schedule + c_schedule
+    final_start = max(
+        [row["起始天数"] for row in all_rows]
+        + [
+            row["结束天数"] + 1
+            for row in all_rows
+            if row["结束天数"] is not None
+        ]
+    )
+    horizon = max(3650, final_start + 1)
+    final_a_redeem = _redemption_rate_at_day(a_schedule, final_start)
+    final_c_redeem = _redemption_rate_at_day(c_schedule, final_start)
+    slope = (a_sales_rate - c_sales_rate) / 365
+    future_crossing: float | None = None
+    if final_a_redeem is not None and final_c_redeem is not None and slope:
+        intercept = (
+            a_purchase_rate
+            + final_a_redeem
+            - c_purchase_rate
+            - final_c_redeem
+        )
+        future_crossing = -intercept / slope
+        if future_crossing >= final_start:
+            horizon = max(horizon, math.ceil(future_crossing) + 2)
+    horizon = min(horizon, 36500)
+
+    compared_days: list[dict[str, Any]] = []
+    for day in range(1, horizon + 1):
+        a_redeem = _redemption_rate_at_day(a_schedule, day)
+        c_redeem = _redemption_rate_at_day(c_schedule, day)
+        if a_redeem is None or c_redeem is None:
+            continue
+        a_total = a_purchase_rate + a_redeem + a_sales_rate * day / 365
+        c_total = c_purchase_rate + c_redeem + c_sales_rate * day / 365
+        difference = a_total - c_total
+        winner = "相同" if abs(difference) < 0.0005 else ("A" if difference < 0 else "C")
+        compared_days.append(
+            {
+                "天数": day,
+                "更省份额": winner,
+                "A赎回费率": a_redeem,
+                "C赎回费率": c_redeem,
+                "A总费率": a_total,
+                "C总费率": c_total,
+            }
+        )
+    if not compared_days or compared_days[0]["天数"] != 1:
+        return []
+    if any(
+        current["天数"] != previous["天数"] + 1
+        for previous, current in zip(compared_days, compared_days[1:])
+    ):
+        return []
+
+    intervals: list[dict[str, Any]] = []
+    group_start = 0
+    for index in range(1, len(compared_days) + 1):
+        previous = compared_days[index - 1]
+        current = compared_days[index] if index < len(compared_days) else None
+        same_group = current is not None and all(
+            current[key] == previous[key]
+            for key in ("更省份额", "A赎回费率", "C赎回费率")
+        )
+        if same_group:
+            continue
+        first = compared_days[group_start]
+        last = previous
+        intervals.append(
+            {
+                "起始天数": first["天数"],
+                "结束天数": last["天数"],
+                "持有期限": _holding_period_label(first["天数"], last["天数"]),
+                "更省份额": first["更省份额"],
+                "A申购费率": a_purchase_rate,
+                "A赎回费率": first["A赎回费率"],
+                "A销售服务费率": a_sales_rate,
+                "A总费率起": round(first["A总费率"], 6),
+                "A总费率止": round(last["A总费率"], 6),
+                "C申购费率": c_purchase_rate,
+                "C赎回费率": first["C赎回费率"],
+                "C销售服务费率": c_sales_rate,
+                "C总费率起": round(first["C总费率"], 6),
+                "C总费率止": round(last["C总费率"], 6),
+            }
+        )
+        group_start = index
+
+    has_open_ended_fees = all(
+        any(row["结束天数"] is None for row in schedule)
+        for schedule in (a_schedule, c_schedule)
+    )
+    no_unseen_crossing = (
+        future_crossing is None
+        or future_crossing < final_start
+        or future_crossing <= horizon
+    )
+    if has_open_ended_fees and no_unseen_crossing and intervals:
+        intervals[-1]["结束天数"] = None
+        intervals[-1]["持有期限"] = _holding_period_label(
+            intervals[-1]["起始天数"], None
+        )
+        intervals[-1]["A总费率止"] = None
+        intervals[-1]["C总费率止"] = None
+    return intervals
+
+
 def _build_share_class_advice(
     code: str,
     fund_name: str,
     current_purchase_fee: dict[str, Any],
     warnings: list[str],
     current_fee_soup: BeautifulSoup | None = None,
+    current_redeem_fee: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """构建 A/C 份额选择建议：定位配对份额并测算临界持有天数。"""
+    """构建 A/C 份额建议：按持有期比较买入、赎回与销售服务总成本。"""
     parsed = _split_share_class(fund_name)
     if not parsed:
         return None
@@ -548,18 +1108,23 @@ def _build_share_class_advice(
     sibling_code = sibling["代码"]
     sibling_fee_soup = _load_fee_page_soup(sibling_code, warnings)
     sibling_purchase_fee = _load_purchase_fee(sibling_fee_soup, warnings)
+    sibling_redeem_fee = _load_redeem_fee(sibling_fee_soup, warnings)
 
-    # 归类出 A 类与 C 类各自的代码、名称、申购费明细。
+    # 归类出 A 类与 C 类各自的代码、名称、申购费和赎回费明细。
     classes = {
         current_cls: {
             "代码": code,
             "名称": fund_name,
             "申购费": current_purchase_fee,
+            "赎回费": current_redeem_fee or {},
+            "费率页": current_fee_soup,
         },
         sibling["类别"]: {
             "代码": sibling_code,
             "名称": sibling["名称"],
             "申购费": sibling_purchase_fee,
+            "赎回费": sibling_redeem_fee,
+            "费率页": sibling_fee_soup,
         },
     }
     a_info = classes.get("A")
@@ -567,40 +1132,55 @@ def _build_share_class_advice(
     if not a_info or not c_info:
         return None
 
-    # A 类首档申购费率（优先渠道优惠费率）。
-    a_rows = (a_info["申购费"] or {}).get("明细") or []
-    a_purchase_rate = None
-    if a_rows:
-        a_purchase_rate = _first_percent(
-            a_rows[0].get("天天基金优惠费率"), a_rows[0].get("原费率")
-        )
-    # C 类年销售服务费率：C 类代码要么是当前份额、要么是配对份额，
-    # 复用对应已抓取的费率页 soup，避免再次下载同一页面。
-    if c_info["代码"] == code:
-        c_fee_soup = current_fee_soup
-    elif c_info["代码"] == sibling_code:
-        c_fee_soup = sibling_fee_soup
-    else:
-        c_fee_soup = _load_fee_page_soup(c_info["代码"], warnings)
-    c_sales_rate = _load_sales_service_fee_rate(c_fee_soup, warnings)
+    # 小额首档申购费优先使用渠道优惠费率。C 类未列申购费表时按行业常见的
+    # 0% 估算，并在说明中明确该假设。
+    a_purchase_rate = _purchase_fee_rate(a_info["申购费"])
+    c_purchase_rate = _purchase_fee_rate(c_info["申购费"])
+    assumed_c_purchase_zero = c_purchase_rate is None
+    if assumed_c_purchase_zero:
+        c_purchase_rate = 0.0
 
-    threshold_days = None
-    if a_purchase_rate and c_sales_rate and c_sales_rate > 0:
-        # 临界天数：A 类一次性申购费 == C 类持有期销售服务费累计。
-        threshold_days = round(a_purchase_rate / (c_sales_rate / 365))
+    a_sales_rate = _load_sales_service_fee_rate(a_info["费率页"], warnings)
+    c_sales_rate = _load_sales_service_fee_rate(c_info["费率页"], warnings)
+    # A 类费率页通常不列销售服务费，表示该项为 0；C 类则必须取得该数据。
+    a_sales_rate = a_sales_rate or 0.0
 
-    if threshold_days:
-        summary = (
-            f"预计持有超过约 {threshold_days} 天时，A 类（{a_info['名称']}）"
-            f"综合成本更低；短于该天数则 C 类（{c_info['名称']}）更划算。"
+    periods: list[dict[str, Any]] = []
+    if a_purchase_rate is not None and c_sales_rate is not None:
+        periods = _compare_share_class_costs(
+            a_purchase_rate=a_purchase_rate,
+            c_purchase_rate=c_purchase_rate,
+            a_sales_rate=a_sales_rate,
+            c_sales_rate=c_sales_rate,
+            a_redeem_fee=a_info["赎回费"],
+            c_redeem_fee=c_info["赎回费"],
         )
+
+    if periods:
+        comparison_parts = []
+        for period in periods:
+            winner = period["更省份额"]
+            verdict = "成本接近" if winner == "相同" else f"{winner} 类更省"
+            comparison_parts.append(f"{period['持有期限']} {verdict}")
+        summary = "买入后赎回：" + "；".join(comparison_parts) + "。"
     else:
         summary = (
             f"已找到配对份额：A 类 {a_info['名称']}（{a_info['代码']}）、"
             f"C 类 {c_info['名称']}（{c_info['代码']}）。"
-            "因费率数据不足，暂无法测算精确临界天数——"
+            "因申购、赎回或销售服务费数据不完整，暂无法按持有天数精确比较——"
             "通常长期持有选 A 类、短期持有选 C 类。"
         )
+
+    threshold_days = None
+    if len(periods) >= 2 and periods[-1]["更省份额"] == "A":
+        trailing_a_index = len(periods) - 1
+        while (
+            trailing_a_index > 0
+            and periods[trailing_a_index - 1]["更省份额"] == "A"
+        ):
+            trailing_a_index -= 1
+        if trailing_a_index > 0:
+            threshold_days = periods[trailing_a_index]["起始天数"]
 
     return {
         "可用": True,
@@ -609,17 +1189,23 @@ def _build_share_class_advice(
             "代码": a_info["代码"],
             "名称": a_info["名称"],
             "申购费率": a_purchase_rate,
+            "赎回费率": a_info["赎回费"],
+            "年销售服务费率": a_sales_rate,
         },
         "C类": {
             "代码": c_info["代码"],
             "名称": c_info["名称"],
+            "申购费率": c_purchase_rate,
             "年销售服务费率": c_sales_rate,
+            "赎回费率": c_info["赎回费"],
         },
         "临界持有天数": threshold_days,
+        "持有期比较": periods,
         "建议": summary,
         "说明": (
-            "临界天数按 A 类优惠申购费率与 C 类年销售服务费率估算，"
-            "未计入赎回费与持有期收益差异，实际以购买平台费率为准。"
+            "总费率≈申购费率＋持有期对应赎回费率＋年销售服务费率×持有天数÷365；"
+            f"按小额首档优惠费率估算{('，C 类未列申购费时按 0% 计' if assumed_c_purchase_zero else '')}。"
+            "未计入持有期收益及其对赎回金额的影响，实际以购买平台确认结果为准。"
         ),
     }
 
@@ -2634,6 +3220,10 @@ def get_fund_data(
             warnings,
             symbol=code,
         ),
+        "fund_managers": lambda: _load_fund_managers(code, warnings),
+        "fund_companies": lambda: _safe_call(
+            "基金公司概览", ak.fund_aum_em, warnings
+        ),
         "holder_structure": lambda: _load_holder_structure(code, warnings),
         "fee_page_soup": lambda: _load_fee_page_soup(code, warnings),
         "achievement": lambda: _safe_call(
@@ -2684,6 +3274,8 @@ def get_fund_data(
 
     overview_frame = results["overview"]
     xq_frame = results["xq"]
+    fund_managers = results["fund_managers"]
+    company_frame = results["fund_companies"]
     holder_structure = results["holder_structure"]
     fee_page_soup = results["fee_page_soup"]
     achievement_frame = results["achievement"]
@@ -2707,6 +3299,9 @@ def get_fund_data(
     scale_details = _extract_scale_details(overview, xq)
     purchase_fee = _load_purchase_fee(fee_page_soup, warnings)
     redeem_fee = _load_redeem_fee(fee_page_soup, warnings)
+    sales_service_fee_rate = _load_sales_service_fee_rate(
+        fee_page_soup, warnings
+    )
 
     nav_frames = {key: results[f"nav::{key}"] for key in nav_requests}
     nav_frames.update(
@@ -2834,7 +3429,11 @@ def get_fund_data(
         ),
         "管理费率": _pick(overview.get("管理费率"), xq.get("管理费")),
         "托管费率": _pick(overview.get("托管费率"), xq.get("托管费")),
+        "销售服务费率": sales_service_fee_rate,
     }
+    company_name = basic["管理人"]
+    basic["基金经理"] = fund_managers
+    basic["基金公司"] = _extract_fund_company(company_frame, company_name)
 
     if not any((basic["名称"], net_value["单位净值"], primary_holdings)):
         details = "；".join(warnings[-3:]) if warnings else "AKShare 未返回数据"
@@ -2846,6 +3445,7 @@ def get_fund_data(
         purchase_fee,
         warnings,
         current_fee_soup=fee_page_soup,
+        current_redeem_fee=redeem_fee,
     )
     if share_class_advice:
         basic["AC份额建议"] = share_class_advice
@@ -2957,6 +3557,8 @@ def get_fund_data(
             "基础资料": [
                 "AKShare.fund_overview_em",
                 "AKShare.fund_individual_basic_info_xq",
+                "天天基金基金经理页与经理个人档案",
+                "AKShare.fund_aum_em（东方财富基金公司榜单）",
                 "天天基金持有人结构及申购费率（AKShare 同源）",
             ],
             "净值及业绩": rank_source

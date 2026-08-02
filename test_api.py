@@ -10,13 +10,20 @@ from fastapi import HTTPException
 from benchmark_cache import BenchmarkFileCache, SHANGHAI_TZ
 from fund_cache import FundFileCache
 from stock_cache import StockFileCache
+from watchlist_store import WatchlistFileStore
 from app import (
     benchmark_catalog,
     benchmark_history,
+    bond_official_link,
     fund_detail,
     fund_holdings_by_period,
+    fund_search,
     health,
     stock_detail,
+    WatchlistFundInput,
+    watchlist_detail,
+    watchlist_remove,
+    watchlist_upsert,
 )
 
 
@@ -24,18 +31,74 @@ class FundApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_health(self) -> None:
         self.assertEqual(await health(), {"status": "ok"})
 
+    @patch("app.search_funds")
+    async def test_searches_local_fund_directory(self, mocked_search) -> None:
+        mocked_search.return_value = {
+            "基金": [{"代码": "000001", "名称": "华夏成长混合", "类型": "混合型"}],
+            "匹配总数": 1,
+            "目录月份": "202608",
+        }
+
+        result = await fund_search(q="华夏成长", limit=8)
+
+        self.assertEqual(result["基金"][0]["代码"], "000001")
+        self.assertEqual(result["查询"], "华夏成长")
+        mocked_search.assert_called_once_with("华夏成长", 8)
+
+    async def test_bond_official_link_redirects_to_google_search(self) -> None:
+        response = await bond_official_link(
+            name="24电网MTN001",
+            code="102480901",
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers["location"],
+            "https://www.google.com/search?"
+            "q=24%E7%94%B5%E7%BD%91MTN001%20102480901",
+        )
+
+    async def test_watchlist_uses_local_json_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = WatchlistFileStore(Path(directory) / "watchlist.json")
+            with patch("app._watchlist_store", store):
+                saved = await watchlist_upsert(
+                    "000001",
+                    WatchlistFundInput(
+                        name=" 测试基金 ",
+                        fund_type="混合型",
+                        category=" 偏股 ",
+                        custom_name=" 核心仓 ",
+                    ),
+                )
+                listed = await watchlist_detail()
+                removed = await watchlist_remove("000001")
+
+        self.assertEqual(saved["基金项"]["category"], "偏股")
+        self.assertEqual(saved["基金项"]["custom_name"], "核心仓")
+        self.assertEqual(listed["总数"], 1)
+        self.assertEqual(listed["基金"][0]["code"], "000001")
+        self.assertTrue(removed["已移除"])
+        self.assertEqual(removed["总数"], 0)
+
+    async def test_watchlist_rejects_invalid_fund_code(self) -> None:
+        with self.assertRaises(HTTPException) as raised:
+            await watchlist_upsert("123", WatchlistFundInput())
+        self.assertEqual(raised.exception.status_code, 422)
+
     async def test_rejects_invalid_code(self) -> None:
         with self.assertRaises(HTTPException) as raised:
             await fund_detail("123", refresh=False)
         self.assertEqual(raised.exception.status_code, 422)
 
-    async def test_benchmark_catalog_contains_equity_and_bond_tracks(
+    async def test_benchmark_catalog_contains_equity_bond_and_money_tracks(
         self,
     ) -> None:
         result = await benchmark_catalog()
         keys = {row["key"] for row in result["基准"]}
         self.assertIn("hs300", keys)
         self.assertIn("cbond_mid_short", keys)
+        self.assertIn("money_fund", keys)
         self.assertIn("equity_bond_80_20", keys)
 
     @patch("app.get_track_benchmark")

@@ -29,10 +29,22 @@ class TrackBenchmarkTests(unittest.TestCase):
         self.assertEqual(catalog["chinext"]["名称"], "创业板指")
         self.assertEqual(catalog["star50"]["名称"], "科创50")
         self.assertEqual(catalog["csi_dividend"]["名称"], "中证红利")
+        self.assertEqual(catalog["money_fund"]["简称"], "货币基金")
+        self.assertEqual(catalog["money_fund"]["类型"], "货币现金")
         self.assertEqual(
             catalog["equity_bond_80_20"]["说明"],
             "80%沪深300 + 20%中债新综合财富，每日定权复合",
         )
+
+    def test_recommends_money_fund_benchmark_for_money_market_fund(
+        self,
+    ) -> None:
+        recommendation = recommend_track_benchmark(
+            "示例货币基金A",
+            "货币型",
+        )
+
+        self.assertEqual(recommendation["key"], "money_fund")
 
     def test_recommends_mid_long_benchmark_for_long_bond_fund(
         self,

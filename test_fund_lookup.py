@@ -3,14 +3,17 @@ from datetime import date
 from unittest.mock import Mock, patch
 
 import pandas as pd
+from bs4 import BeautifulSoup
 
 from fund_lookup import (
     _bond_credit_structure,
     _clean,
+    _compare_share_class_costs,
     _dividend_history,
     _enrich_stock_holdings,
     _extract_related_etf_code,
     _extract_scale_details,
+    _extract_fund_company,
     _fund_age,
     _holdings_for_period,
     _latest_holdings,
@@ -18,6 +21,7 @@ from fund_lookup import (
     _load_stock_fundamentals,
     _load_stock_quotes,
     _load_return_comparison_em,
+    _load_sales_service_fee_rate,
     _nav_history,
     _normalize_code,
     _parse_asset_allocation_report,
@@ -25,17 +29,51 @@ from fund_lookup import (
     _parse_fof_fund_holdings,
     _parse_target_fund_holdings,
     _parse_holder_structure,
+    _parse_fund_manager_index,
+    _parse_holding_period_bounds,
     _parse_purchase_fee_table,
+    _parse_manager_profile,
     _parse_redeem_fee_table,
     _pick,
     _report_period,
     _quarter_end_from_period,
     _quarter_report_catalog,
     _year_to_date_return,
+    search_funds,
 )
 
 
 class FundLookupTests(unittest.TestCase):
+    @patch("fund_lookup._fund_search_catalog_for")
+    def test_search_funds_supports_code_chinese_and_pinyin(
+        self,
+        mocked_catalog,
+    ) -> None:
+        mocked_catalog.return_value = (
+            {
+                "code": "000001",
+                "name": "华夏成长混合",
+                "fund_type": "混合型-灵活",
+                "code_search": "000001",
+                "name_search": "华夏成长混合",
+                "pinyin_short": "HXCZHH",
+                "pinyin_full": "HUAXIACHENGZHANGHUNHE",
+            },
+            {
+                "code": "000011",
+                "name": "华夏大盘精选混合A",
+                "fund_type": "混合型-灵活",
+                "code_search": "000011",
+                "name_search": "华夏大盘精选混合A",
+                "pinyin_short": "HXDPJXHHA",
+                "pinyin_full": "HUAXIADAPANJINGXUANHUNHEA",
+            },
+        )
+
+        self.assertEqual(search_funds("000001")["基金"][0]["代码"], "000001")
+        self.assertEqual(search_funds("华夏成长")["基金"][0]["代码"], "000001")
+        self.assertEqual(search_funds("HXCZ")["基金"][0]["代码"], "000001")
+
     def test_normalize_code_preserves_leading_zero(self) -> None:
         self.assertEqual(_normalize_code("000001"), "000001")
 
@@ -85,6 +123,74 @@ class FundLookupTests(unittest.TestCase):
             "6年7个月",
         )
 
+    def test_parse_fund_manager_index(self) -> None:
+        html = """
+        <div class="jl_intro">
+          <a href="//fund.eastmoney.com/manager/30040527.html"><img src="//img.test/a.jpg"></a>
+          <div class="text">
+            <p><strong>姓名：</strong><a>郑晓辉</a></p>
+            <p><strong>上任日期：</strong>2024-12-26</p>
+            <p>郑晓辉先生，博士，现任基金经理。</p>
+          </div>
+        </div>
+        """
+
+        managers = _parse_fund_manager_index(html)
+
+        self.assertEqual(len(managers), 1)
+        self.assertEqual(managers[0]["经理ID"], "30040527")
+        self.assertEqual(managers[0]["姓名"], "郑晓辉")
+        self.assertEqual(managers[0]["上任日期"], "2024-12-26")
+        self.assertEqual(managers[0]["照片"], "https://img.test/a.jpg")
+
+    def test_parse_manager_profile_includes_experience_and_fund_tenure(self) -> None:
+        html = """
+        <div class="jlinfo">
+          <div class="right ms"><p><span>基金经理简介：</span>测试简介</p></div>
+          <div class="right jd">
+            <span>累计任职时间：</span>14年又236天<br>
+            <span>任职起始日期：</span>2006-11-29<br>
+            <span>现任基金公司：</span><a href="//fund.eastmoney.com/company/80000222.html">华夏基金管理有限公司</a>
+            <div class="gmleft gmlefts"><span class="redText">116.55</span></div>
+          </div>
+        </div>
+        <h3 id="name_1">郑晓辉</h3>
+        <table><tbody><tr>
+          <td><a href="//fund.eastmoney.com/000001.html">000001</a></td>
+          <td>华夏成长混合</td><td>相关链接</td><td>混合型</td><td>39.38</td>
+          <td>2024-12-26 ~ 至今</td><td>1年又219天</td><td>51.74%</td>
+        </tr></tbody></table>
+        """
+
+        profile = _parse_manager_profile(html, "000001")
+
+        self.assertEqual(profile["从业年限"], "14年又236天")
+        self.assertEqual(profile["本基金任期"], "1年又219天")
+        self.assertEqual(profile["本基金任职回报"], "51.74%")
+        self.assertEqual(profile["公司ID"], "80000222")
+        self.assertEqual(profile["现任基金资产总规模"], 116.55)
+
+    def test_extract_fund_company_matches_company_overview(self) -> None:
+        frame = pd.DataFrame(
+            [
+                {
+                    "基金公司": "华夏基金管理有限公司",
+                    "成立时间": date(1998, 4, 9),
+                    "全部管理规模": 19218.42,
+                    "全部基金数": 984,
+                    "全部经理数": 134,
+                    "更新日期": "07-21",
+                }
+            ]
+        )
+
+        company = _extract_fund_company(frame, "华夏基金")
+
+        self.assertEqual(company["成立日期"], "1998-04-09")
+        self.assertEqual(company["管理规模"], 19218.42)
+        self.assertEqual(company["基金数量"], 984)
+        self.assertEqual(company["基金经理数量"], 134)
+
     def test_extract_scale_details(self) -> None:
         overview = {
             "成立日期/规模": "2019年12月10日 / 0.986亿份",
@@ -133,6 +239,19 @@ class FundLookupTests(unittest.TestCase):
         self.assertEqual(fees["明细"][0]["天天基金优惠费率"], "0.10%")
         self.assertEqual(fees["明细"][1]["原费率"], "每笔1000元")
 
+    def test_load_sales_service_fee_rate_including_zero(self) -> None:
+        c_soup = BeautifulSoup(
+            "<table><tr><td>销售服务费率</td><td>0.60%</td></tr></table>",
+            "html.parser",
+        )
+        a_soup = BeautifulSoup(
+            "<table><tr><td>销售服务费率</td><td>0.00%</td></tr></table>",
+            "html.parser",
+        )
+
+        self.assertEqual(_load_sales_service_fee_rate(c_soup, []), 0.6)
+        self.assertEqual(_load_sales_service_fee_rate(a_soup, []), 0.0)
+
     def test_parse_redeem_fee_table_by_holding_period(self) -> None:
         frame = pd.DataFrame(
             [
@@ -148,7 +267,68 @@ class FundLookupTests(unittest.TestCase):
         self.assertEqual(len(fees["明细"]), 3)
         self.assertEqual(fees["明细"][0]["适用条件"], "小于7天")
         self.assertEqual(fees["明细"][0]["赎回费率"], "1.50%")
+        self.assertEqual(fees["明细"][0]["起始天数"], 1)
+        self.assertEqual(fees["明细"][0]["结束天数"], 6)
+        self.assertEqual(fees["明细"][1]["起始天数"], 7)
+        self.assertEqual(fees["明细"][1]["结束天数"], 29)
         self.assertEqual(fees["明细"][2]["赎回费率"], "0.00%")
+        self.assertEqual(fees["明细"][2]["起始天数"], 730)
+        self.assertIsNone(fees["明细"][2]["结束天数"])
+
+    def test_parse_holding_period_bounds_supports_symbolic_range(self) -> None:
+        self.assertEqual(_parse_holding_period_bounds("7天≤N＜30天"), (7, 29))
+        self.assertEqual(_parse_holding_period_bounds("30天以上（含30天）"), (30, None))
+
+    def test_compare_share_class_costs_includes_redeem_fee_tiers(self) -> None:
+        a_redeem = _parse_redeem_fee_table(
+            pd.DataFrame(
+                [
+                    {"适用期限": "小于7天", "赎回费率": "1.50%"},
+                    {
+                        "适用期限": "大于等于7天，小于30天",
+                        "赎回费率": "0.50%",
+                    },
+                    {"适用期限": "大于等于30天", "赎回费率": "0.00%"},
+                ]
+            )
+        )
+        c_redeem = _parse_redeem_fee_table(
+            pd.DataFrame(
+                [
+                    {"适用期限": "小于7天", "赎回费率": "1.50%"},
+                    {
+                        "适用期限": "大于等于7天，小于30天",
+                        "赎回费率": "0.75%",
+                    },
+                    {"适用期限": "大于等于30天", "赎回费率": "0.00%"},
+                ]
+            )
+        )
+
+        periods = _compare_share_class_costs(
+            a_purchase_rate=0.10,
+            c_purchase_rate=0.0,
+            a_sales_rate=0.0,
+            c_sales_rate=0.40,
+            a_redeem_fee=a_redeem,
+            c_redeem_fee=c_redeem,
+        )
+
+        self.assertEqual(
+            [
+                (item["起始天数"], item["结束天数"], item["更省份额"])
+                for item in periods
+            ],
+            [
+                (1, 6, "C"),
+                (7, 29, "A"),
+                (30, 90, "C"),
+                (91, 91, "相同"),
+                (92, None, "A"),
+            ],
+        )
+        self.assertEqual(periods[1]["A赎回费率"], 0.5)
+        self.assertEqual(periods[1]["C赎回费率"], 0.75)
 
     def test_latest_holdings_selects_latest_quarter_and_reranks(self) -> None:
         frame = pd.DataFrame(
