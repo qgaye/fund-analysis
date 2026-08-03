@@ -16,6 +16,8 @@ let currentHoldingType = "股票";
 let currentBondStructureView = "品种";
 let currentHoldingsPeriodKey = "";
 let currentQuarterReports = [];
+let currentReportArchive = [];
+let currentReportTypeNotes = {};
 let holdingsRequestId = 0;
 let currentNavHistory = {};
 let currentNavRange = "1y";
@@ -816,7 +818,7 @@ function renderPerformance(performance) {
       Number.isFinite(relativeReturn) ? movementClass(relativeReturn) : ""
     }`;
     relativeValue.textContent = Number.isFinite(relativeReturn)
-      ? `${relativeReturn > 0 ? "+" : ""}${relativeReturn.toFixed(2)}pp`
+      ? `${relativeReturn > 0 ? "+" : ""}${relativeReturn.toFixed(2)}%`
       : "—";
 
     const isAnnualRiskPeriod = ANNUAL_RISK_PERIOD_KEYS.has(key);
@@ -988,7 +990,7 @@ function renderPeriodicReturns(unit = currentPeriodicUnit) {
         Number.isFinite(relativeReturn) ? movementClass(relativeReturn) : ""
       }`;
       relative.textContent = Number.isFinite(relativeReturn)
-        ? `${relativeReturn > 0 ? "+" : ""}${relativeReturn.toFixed(2)}pp`
+        ? `${relativeReturn > 0 ? "+" : ""}${relativeReturn.toFixed(2)}%`
         : "—";
 
       item.append(label, value, benchmarkValue, relative);
@@ -2411,7 +2413,7 @@ function renderNavChart(
       ? movementClass(benchmarkChange)
       : "";
     relativeElement.textContent = Number.isFinite(relativeChange)
-      ? `${relativeChange > 0 ? "+" : ""}${relativeChange.toFixed(2)} 个百分点`
+      ? `${relativeChange > 0 ? "+" : ""}${relativeChange.toFixed(2)}%`
       : "—";
     relativeElement.className = Number.isFinite(relativeChange)
       ? movementClass(relativeChange)
@@ -3902,19 +3904,84 @@ function usesTargetEtfPenetrationView() {
 }
 
 function quarterKeyFromPeriod(period) {
-  const matched = String(period ?? "").match(/(20\d{2})年(?:第)?([1-4])季度/);
-  return matched ? `${matched[1]}Q${matched[2]}` : "";
+  const text = String(period ?? "");
+  const quarter = text.match(/(20\d{2})年(?:第)?([1-4])季度/);
+  if (quarter) return `${quarter[1]}Q${quarter[2]}`;
+  const half = text.match(/(20\d{2})年半年度/);
+  if (half) return `${half[1]}H`;
+  const annual = text.match(/(20\d{2})年年度/);
+  if (annual) return `${annual[1]}A`;
+  return "";
 }
 
 function quarterLabel(periodKey) {
-  const matched = String(periodKey ?? "").match(/^(20\d{2})Q([1-4])$/);
-  return matched ? `${matched[1]}年第${matched[2]}季度` : periodKey;
+  const key = String(periodKey ?? "");
+  const quarter = key.match(/^(20\d{2})Q([1-4])$/);
+  if (quarter) return `${quarter[1]}年第${quarter[2]}季度`;
+  const half = key.match(/^(20\d{2})H$/);
+  if (half) return `${half[1]}年半年度`;
+  const annual = key.match(/^(20\d{2})A$/);
+  if (annual) return `${annual[1]}年年度`;
+  return periodKey;
 }
 
 function setHoldingsQuarterStatus(message, state = "ready") {
   const status = document.querySelector("#holdings-quarter-status");
   status.dataset.state = state;
   status.querySelector("span").textContent = message;
+}
+
+const REPORT_TYPE_ORDER = ["季度报告", "半年度报告", "年度报告"];
+
+function renderReportTypeHelp(notes) {
+  const content = document.querySelector("#report-type-help-content");
+  const trigger = document.querySelector("#report-type-help-trigger");
+  if (!content) return;
+  content.replaceChildren();
+  const types = REPORT_TYPE_ORDER.filter((type) => notes && notes[type]);
+  if (trigger) trigger.hidden = !types.length;
+  if (!types.length) return;
+
+  types.forEach((type, index) => {
+    const note = notes[type];
+    const article = document.createElement("article");
+    article.dataset.reportTypeCard = type;
+
+    const head = document.createElement("header");
+    const order = document.createElement("span");
+    order.textContent = `0${index + 1} / ${type}`;
+    const headText = document.createElement("div");
+    const title = document.createElement("h3");
+    title.append(type);
+    const badge = document.createElement("span");
+    badge.className = "report-type-badge";
+    badge.dataset.type = type;
+    badge.textContent = note.披露频率 ?? type;
+    title.append(badge);
+    const summary = document.createElement("p");
+    summary.textContent = note.说明 ?? "";
+    headText.append(title, summary);
+    head.append(order, headText);
+
+    const dl = document.createElement("dl");
+    [
+      ["披露时限", note.披露时限],
+      ["持仓口径", note.持仓口径],
+      ["财务口径", note.财务口径],
+    ].forEach(([label, value]) => {
+      if (!value) return;
+      const row = document.createElement("div");
+      const dt = document.createElement("dt");
+      dt.textContent = label;
+      const dd = document.createElement("dd");
+      dd.textContent = value;
+      row.append(dt, dd);
+      dl.append(row);
+    });
+
+    article.append(head, dl);
+    content.append(article);
+  });
 }
 
 function renderQuarterReportList(reports, selectedKey) {
@@ -3925,12 +3992,13 @@ function renderQuarterReportList(reports, selectedKey) {
   if (!reports.length) {
     const empty = document.createElement("p");
     empty.className = "quarter-report-empty";
-    empty.textContent = "暂无可用的季度报告目录。";
+    empty.textContent = "暂无可用的定期报告目录。";
     list.append(empty);
     return;
   }
 
   reports.forEach((report, index) => {
+    const reportType = report.报告类型 ?? "季度报告";
     const link = document.createElement("a");
     link.className = "quarter-report-link";
     link.href = report.链接;
@@ -3940,7 +4008,7 @@ function renderQuarterReportList(reports, selectedKey) {
     link.style.setProperty("--report-index", index);
     link.setAttribute(
       "aria-label",
-      `打开${report.报告期 ?? report.key}原始季度报告`,
+      `打开${report.报告期 ?? report.key}原始${reportType}`,
     );
 
     const sequence = document.createElement("span");
@@ -3950,6 +4018,11 @@ function renderQuarterReportList(reports, selectedKey) {
     copy.className = "quarter-report-copy";
     const period = document.createElement("strong");
     period.textContent = report.报告期 ?? quarterLabel(report.key);
+    const badge = document.createElement("span");
+    badge.className = "report-type-badge";
+    badge.dataset.type = reportType;
+    badge.textContent = reportType;
+    period.append(badge);
     const date = document.createElement("small");
     date.textContent = report.公告日期
       ? `公告于 ${report.公告日期}`
@@ -3957,7 +4030,13 @@ function renderQuarterReportList(reports, selectedKey) {
     copy.append(period, date);
     const action = document.createElement("span");
     action.className = "quarter-report-action";
-    action.textContent = report.key === selectedKey ? "当前持仓 ↗" : "查看原文 ↗";
+    const canSwitch = report.报告类型 === "季度报告";
+    action.textContent =
+      report.key === selectedKey
+        ? "当前持仓 ↗"
+        : canSwitch
+          ? "查看原文 ↗"
+          : "仅查看原文 ↗";
     link.append(sequence, copy, action);
     list.append(link);
   });
@@ -3970,21 +4049,25 @@ function initializeHoldingsExplorer(holdings) {
   document.querySelector("#holdings-content").classList.remove("is-loading");
   document.querySelector("#holdings-content").removeAttribute("aria-busy");
   currentQuarterReports = holdings?.季报列表 ?? [];
+  currentReportArchive =
+    holdings?.报告列表 ?? holdings?.季报列表 ?? [];
+  currentReportTypeNotes = holdings?.报告类型说明 ?? {};
   currentHoldingsPeriodKey =
     holdings?.季度Key ?? quarterKeyFromPeriod(holdings?.报告期);
 
   select.replaceChildren();
-  currentQuarterReports.forEach((report, index) => {
+  currentReportArchive.forEach((report, index) => {
     const option = document.createElement("option");
     option.value = report.key;
-    option.textContent = `${report.报告期 ?? quarterLabel(report.key)}${
+    const typeTag = report.报告类型 ? ` · ${report.报告类型}` : "";
+    option.textContent = `${report.报告期 ?? quarterLabel(report.key)}${typeTag}${
       index === 0 ? " · 最新披露" : ""
     }`;
     select.append(option);
   });
   if (
     currentHoldingsPeriodKey &&
-    !currentQuarterReports.some(
+    !currentReportArchive.some(
       (report) => report.key === currentHoldingsPeriodKey,
     )
   ) {
@@ -3996,9 +4079,10 @@ function initializeHoldingsExplorer(holdings) {
   if (currentHoldingsPeriodKey) {
     select.value = currentHoldingsPeriodKey;
   }
-  explorer.hidden = !select.options.length && !currentQuarterReports.length;
+  explorer.hidden = !select.options.length && !currentReportArchive.length;
+  renderReportTypeHelp(currentReportTypeNotes);
   renderQuarterReportList(
-    currentQuarterReports,
+    currentReportArchive,
     currentHoldingsPeriodKey,
   );
   setHoldingsQuarterStatus(
@@ -4030,6 +4114,9 @@ async function enrichHoldingsForCurrentPeriod() {
     if (currentHoldingsPeriodKey !== periodKey) return;
     if ((payload.季报列表 ?? []).length) {
       currentQuarterReports = payload.季报列表;
+    }
+    if ((payload.报告列表 ?? []).length) {
+      currentReportArchive = payload.报告列表;
     }
     renderHoldings(payload, true);
   } catch (error) {
@@ -4072,10 +4159,13 @@ async function queryHoldingsPeriod(periodKey) {
     if ((payload.季报列表 ?? []).length) {
       currentQuarterReports = payload.季报列表;
     }
+    if ((payload.报告列表 ?? []).length) {
+      currentReportArchive = payload.报告列表;
+    }
     renderHoldings(payload, true);
     select.value = currentHoldingsPeriodKey;
     renderQuarterReportList(
-      currentQuarterReports,
+      currentReportArchive,
       currentHoldingsPeriodKey,
     );
     const cacheLabel =
@@ -5835,6 +5925,23 @@ document
 
 metricHelpDialog.addEventListener("click", (event) => {
   if (event.target === metricHelpDialog) metricHelpDialog.close();
+});
+
+const reportTypeHelpDialog = document.querySelector(
+  "#report-type-help-dialog",
+);
+document
+  .querySelector("#report-type-help-trigger")
+  ?.addEventListener("click", () => {
+    if (reportTypeHelpDialog && !reportTypeHelpDialog.open) {
+      reportTypeHelpDialog.showModal();
+    }
+  });
+document
+  .querySelector("#report-type-help-close")
+  ?.addEventListener("click", () => reportTypeHelpDialog?.close());
+reportTypeHelpDialog?.addEventListener("click", (event) => {
+  if (event.target === reportTypeHelpDialog) reportTypeHelpDialog.close();
 });
 
 const benchmarkHelpDialog = document.querySelector("#benchmark-help-dialog");

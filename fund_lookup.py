@@ -2597,6 +2597,51 @@ def _quarter_key(value: str) -> tuple[int, int]:
     return int(matched.group("year")), int(matched.group("quarter"))
 
 
+def _resolve_period_key(value: str) -> dict[str, Any]:
+    """解析持仓查询的报告期 key，支持季报/半年报/年报。
+
+    公开的表格化持仓接口只按季度披露前十大，因此半年报映射到二季度
+    （6 月末）、年报映射到四季度（12 月末）以复用同一份披露数据；
+    资产分布等 PDF 明细仍按原始 key 从报告目录里精确选取对应报告。
+    """
+    text = str(value or "").strip().upper()
+    quarter_match = re.fullmatch(r"(?P<year>20\d{2})Q(?P<quarter>[1-4])", text)
+    if quarter_match:
+        year = int(quarter_match.group("year"))
+        quarter = int(quarter_match.group("quarter"))
+        return {
+            "key": text,
+            "报告类型": "季度报告",
+            "年度": year,
+            "季度": quarter,
+            "报告期": f"{year}年第{quarter}季度",
+        }
+    half_match = re.fullmatch(r"(?P<year>20\d{2})H", text)
+    if half_match:
+        year = int(half_match.group("year"))
+        return {
+            "key": text,
+            "报告类型": "半年度报告",
+            "年度": year,
+            "季度": 2,
+            "报告期": f"{year}年半年度",
+        }
+    annual_match = re.fullmatch(r"(?P<year>20\d{2})A", text)
+    if annual_match:
+        year = int(annual_match.group("year"))
+        return {
+            "key": text,
+            "报告类型": "年度报告",
+            "年度": year,
+            "季度": 4,
+            "报告期": f"{year}年年度",
+        }
+    raise ValueError(
+        "报告期必须使用 YYYYQ1—YYYYQ4（季报）、YYYYH（半年报）或 "
+        "YYYYA（年报）格式。"
+    )
+
+
 def _quarter_key_from_period(value: str | None) -> str | None:
     if not value:
         return None
@@ -2609,49 +2654,146 @@ def _quarter_key_from_period(value: str | None) -> str | None:
     return f"{matched.group('year')}Q{matched.group('quarter')}"
 
 
-def _quarter_report_catalog(
+# 各类定期报告的披露口径差异，供前端向用户解释“看到的是哪种报告”。
+REPORT_TYPE_NOTES: dict[str, dict[str, str]] = {
+    "季度报告": {
+        "披露频率": "每季度",
+        "披露时限": "季度结束后 15 个工作日内",
+        "持仓口径": "仅披露期末前十大重仓股与前五大债券，非完整持仓",
+        "财务口径": "未经审计的简要财务指标，无完整财务报表与附注",
+        "说明": (
+            "时效性最强，可最快看到基金最新的重仓方向与资产配置，"
+            "但只有前十大持仓、无完整财报，细节最少。"
+        ),
+    },
+    "半年度报告": {
+        "披露频率": "每半年（覆盖 1—6 月）",
+        "披露时限": "上半年结束后 60 日内",
+        "持仓口径": "披露期末全部持仓明细，信息量远大于季报",
+        "财务口径": "含较完整的财务报表，但通常未经审计",
+        "说明": (
+            "披露全部持仓和更完整的财务数据，介于季报与年报之间；"
+            "覆盖上半年，可看到季报看不到的非重仓头寸。"
+        ),
+    },
+    "年度报告": {
+        "披露频率": "每年",
+        "披露时限": "会计年度结束后 90 日内",
+        "持仓口径": "披露期末全部持仓明细及全年买卖变动",
+        "财务口径": "含经会计师事务所审计的完整财务报表与附注",
+        "说明": (
+            "信息最全、经过审计，含全部持仓、全年运作分析、费用与利润分配等，"
+            "但时效性最差、发布最晚。"
+        ),
+    },
+}
+
+
+def _periodic_report_catalog(
     reports: pd.DataFrame,
 ) -> list[dict[str, Any]]:
-    """整理季度报告目录，并生成可直接访问的原始 PDF 链接。"""
+    """整理季报 / 半年报 / 年报等全部定期报告目录，并生成原始 PDF 链接。
+
+    同一报告期通常同时存在正文与“摘要”两份公告，这里只保留信息完整的正文；
+    “中期报告”是部分年份对半年度报告的旧称，统一归入“半年度报告”。
+    """
     required = {"公告标题", "公告日期", "报告ID"}
     if reports.empty or not required.issubset(reports.columns):
         return []
 
-    entries: list[dict[str, Any]] = []
-    pattern = re.compile(
+    quarter_map = {"一": "1", "二": "2", "三": "3", "四": "4"}
+    quarter_pattern = re.compile(
         r"(?P<year>20\d{2})年第?(?P<quarter>[一二三四1-4])季度报告\s*$"
     )
-    quarter_map = {"一": "1", "二": "2", "三": "3", "四": "4"}
+    semiannual_pattern = re.compile(
+        r"(?P<year>20\d{2})年(?:半年度|中期)报告\s*$"
+    )
+    annual_pattern = re.compile(r"(?P<year>20\d{2})年年度报告\s*$")
+
+    entries: list[dict[str, Any]] = []
     for _, row in reports.iterrows():
         title = str(row.get("公告标题") or "").strip()
-        matched = pattern.search(title)
         report_id = str(row.get("报告ID") or "").strip()
-        if not matched or not re.fullmatch(r"AN\d+", report_id):
+        if not re.fullmatch(r"AN\d+", report_id):
             continue
-        year = int(matched.group("year"))
-        quarter = int(
-            quarter_map.get(
-                matched.group("quarter"),
-                matched.group("quarter"),
+
+        entry: dict[str, Any] | None = None
+        matched = quarter_pattern.search(title)
+        if matched:
+            year = int(matched.group("year"))
+            quarter = int(
+                quarter_map.get(
+                    matched.group("quarter"), matched.group("quarter")
+                )
             )
-        )
-        entries.append(
-            {
+            end_month = {1: 3, 2: 6, 3: 9, 4: 12}[quarter]
+            entry = {
                 "key": f"{year}Q{quarter}",
+                "报告类型": "季度报告",
                 "年度": year,
                 "季度": quarter,
                 "报告期": f"{year}年第{quarter}季度",
+                "_排序": year * 100 + end_month,
+            }
+        elif semiannual_pattern.search(title):
+            year = int(semiannual_pattern.search(title).group("year"))
+            entry = {
+                "key": f"{year}H",
+                "报告类型": "半年度报告",
+                "年度": year,
+                "季度": None,
+                "报告期": f"{year}年半年度",
+                "_排序": year * 100 + 6.5,
+            }
+        elif annual_pattern.search(title):
+            year = int(annual_pattern.search(title).group("year"))
+            entry = {
+                "key": f"{year}A",
+                "报告类型": "年度报告",
+                "年度": year,
+                "季度": None,
+                "报告期": f"{year}年年度",
+                "_排序": year * 100 + 12,
+            }
+        if entry is None:
+            continue
+
+        entry.update(
+            {
                 "公告标题": title,
                 "公告日期": _clean(row.get("公告日期")),
                 "报告ID": report_id,
                 "链接": f"https://pdf.dfcfw.com/pdf/H2_{report_id}_1.pdf",
             }
         )
-    entries.sort(
-        key=lambda item: (item["年度"], item["季度"]),
-        reverse=True,
+        entries.append(entry)
+
+    # 同一 key 可能重复出现（如摘要已被排除后仍有更正版），保留公告最新的一份。
+    deduped: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        existing = deduped.get(entry["key"])
+        if existing is None or str(entry.get("公告日期") or "") >= str(
+            existing.get("公告日期") or ""
+        ):
+            deduped[entry["key"]] = entry
+
+    result = sorted(
+        deduped.values(), key=lambda item: item["_排序"], reverse=True
     )
-    return entries
+    for item in result:
+        item.pop("_排序", None)
+    return result
+
+
+def _quarter_report_catalog(
+    reports: pd.DataFrame,
+) -> list[dict[str, Any]]:
+    """仅返回季度报告目录，供按季度切换持仓的下拉框使用。"""
+    return [
+        item
+        for item in _periodic_report_catalog(reports)
+        if item.get("报告类型") == "季度报告"
+    ]
 
 
 def _quarter_end_from_period(period: str | None) -> date | None:
@@ -2798,7 +2940,7 @@ def _load_portfolio_report(
     if reports.empty or not required.issubset(reports.columns):
         return {}, {}, [], []
 
-    report_catalog = _quarter_report_catalog(reports)
+    report_catalog = _periodic_report_catalog(reports)
     if period_key is not None:
         selected_report = next(
             (
@@ -2859,12 +3001,12 @@ def _load_portfolio_report(
             except Exception as exc:
                 warnings.append(f"FOF 持仓基金名称补全失败：{exc}")
     if not asset_details:
-        warnings.append("基金资产分布获取失败：未能解析最新季度报告。")
+        warnings.append("基金资产分布获取失败：未能解析该定期报告。")
 
     title = str(latest["公告标题"]).strip()
     announcement_date = _clean(latest.get("公告日期"))
     report_period = _report_period(title)
-    report_scope = "指定季度报告" if period_key else "最新季度报告"
+    report_scope = "指定定期报告" if period_key else "最新季度报告"
     asset_allocation = (
         {
             "可用": True,
@@ -3149,9 +3291,11 @@ def get_fund_holdings_by_period(
     period_key: str,
     holdings_limit: int | None = None,
 ) -> dict[str, Any]:
-    """按需查询基金指定季度的公开披露持仓。"""
+    """按需查询基金指定报告期（季报/半年报/年报）的公开披露持仓。"""
     code = _normalize_code(fund_code)
-    year, quarter = _quarter_key(period_key)
+    period_info = _resolve_period_key(period_key)
+    year = period_info["年度"]
+    quarter = period_info["季度"]
     if holdings_limit is not None and holdings_limit <= 0:
         raise ValueError("holdings_limit 必须大于 0。")
 
@@ -3248,10 +3392,23 @@ def get_fund_holdings_by_period(
         is_etf_link=bool(target_etf_code),
     )
     primary_holdings = fund_holdings or stock_holdings or bond_holdings
-    period_label = f"{year}年第{quarter}季度"
+    period_label = period_info["报告期"]
+    report_type = period_info["报告类型"]
+    # 半年报/年报的表格化持仓仍来自对应的二/四季度前十大披露，需向用户说明。
+    holdings_note = None
+    if report_type != "季度报告":
+        source_quarter = "二季度" if report_type == "半年度报告" else "四季度"
+        holdings_note = (
+            f"{period_label}报告的完整持仓请查阅下方原始报告 PDF；"
+            f"此处股票/债券明细取自同期（{year}年{source_quarter}末）"
+            "公开披露的前十大持仓。"
+        )
+        warnings.append(holdings_note)
     return {
         "季度Key": period_key,
+        "报告类型": report_type,
         "报告期": period_label,
+        "持仓口径说明": holdings_note,
         "数量": len(stock_holdings) + len(bond_holdings) + len(fund_holdings),
         "资产分布": asset_allocation,
         "资产分类": [
@@ -3298,7 +3455,13 @@ def get_fund_holdings_by_period(
                 else "该季度暂无可用的股票行业配置。"
             ),
         },
-        "季报列表": report_catalog,
+        "季报列表": [
+            report
+            for report in report_catalog
+            if report.get("报告类型") == "季度报告"
+        ],
+        "报告列表": report_catalog,
+        "报告类型说明": REPORT_TYPE_NOTES,
         "当前季报": current_report,
         "ETF穿透": etf_penetration,
         "提示": warnings,
@@ -3634,7 +3797,13 @@ def get_fund_data(
                 len(stock_holdings) + len(bond_holdings) + len(fund_holdings)
             ),
             "资产分布": asset_allocation,
-            "季报列表": quarter_reports,
+            "季报列表": [
+                report
+                for report in quarter_reports
+                if report.get("报告类型") == "季度报告"
+            ],
+            "报告列表": quarter_reports,
+            "报告类型说明": REPORT_TYPE_NOTES,
             "当前季报": next(
                 (
                     report

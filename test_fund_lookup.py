@@ -36,6 +36,7 @@ from fund_lookup import (
     _parse_manager_profile,
     _parse_redeem_fee_table,
     _pick,
+    _periodic_report_catalog,
     _report_period,
     _quarter_end_from_period,
     _quarter_report_catalog,
@@ -654,6 +655,62 @@ class FundLookupTests(unittest.TestCase):
         self.assertEqual(
             reports[0]["链接"],
             "https://pdf.dfcfw.com/pdf/H2_AN202507210001_1.pdf",
+        )
+
+    def test_periodic_report_catalog_covers_all_types(self) -> None:
+        frame = pd.DataFrame(
+            [
+                {
+                    "公告标题": "测试基金2025年第2季度报告",
+                    "公告日期": date(2025, 7, 21),
+                    "报告ID": "AN202507210001",
+                },
+                {
+                    "公告标题": "测试基金2025年半年度报告摘要",
+                    "公告日期": date(2025, 8, 29),
+                    "报告ID": "AN202508290001",
+                },
+                {
+                    "公告标题": "测试基金2025年中期报告",
+                    "公告日期": date(2025, 8, 30),
+                    "报告ID": "AN202508300001",
+                },
+                {
+                    "公告标题": "测试基金2024年年度报告",
+                    "公告日期": date(2025, 3, 30),
+                    "报告ID": "AN202503300001",
+                },
+                {
+                    "公告标题": "测试基金2025年第1季度报告",
+                    "公告日期": date(2025, 4, 21),
+                    "报告ID": "AN202504210001",
+                },
+            ]
+        )
+
+        reports = _periodic_report_catalog(frame)
+
+        # 半年报“摘要”被剔除，中期报告归为半年度报告；按报告期倒序排列。
+        self.assertEqual(
+            [report["key"] for report in reports],
+            ["2025H", "2025Q2", "2025Q1", "2024A"],
+        )
+        by_key = {report["key"]: report for report in reports}
+        self.assertEqual(by_key["2025H"]["报告类型"], "半年度报告")
+        self.assertEqual(by_key["2025H"]["报告期"], "2025年半年度")
+        # 中期报告正文（公告更晚）胜出，链接指向其报告 ID。
+        self.assertEqual(
+            by_key["2025H"]["链接"],
+            "https://pdf.dfcfw.com/pdf/H2_AN202508300001_1.pdf",
+        )
+        self.assertEqual(by_key["2024A"]["报告类型"], "年度报告")
+        self.assertEqual(by_key["2024A"]["报告期"], "2024年年度")
+
+        # 仅季度报告目录用于持仓切换下拉框。
+        quarter_only = _quarter_report_catalog(frame)
+        self.assertEqual(
+            [report["key"] for report in quarter_only],
+            ["2025Q2", "2025Q1"],
         )
 
     def test_latest_industry_allocation_selects_latest_period(self) -> None:

@@ -3893,6 +3893,93 @@ main {
   font-size: 10px;
 }
 
+.report-type-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  vertical-align: middle;
+  color: var(--muted);
+  font: 600 8px/1 var(--mono);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.report-type-badge[data-type="季度报告"] {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.report-type-badge[data-type="半年度报告"] {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.report-type-badge[data-type="年度报告"] {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper, #fff);
+}
+
+/* 定期报告说明弹窗内的分类卡片，复用 metric-help 弹窗的版式。 */
+#report-type-help-content article {
+  display: grid;
+  gap: 12px;
+}
+
+#report-type-help-content article > header {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+#report-type-help-content article > header > span {
+  color: var(--muted);
+  font: 600 9px/1.4 var(--mono);
+  white-space: nowrap;
+}
+
+#report-type-help-content article h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-family: var(--display);
+  font-size: 18px;
+}
+
+#report-type-help-content article > header p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+#report-type-help-content article dl {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+#report-type-help-content article dl > div {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 12px;
+}
+
+#report-type-help-content article dt {
+  color: var(--muted);
+  font: 600 10px/1.6 var(--mono);
+}
+
+#report-type-help-content article dd {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 @keyframes report-card-in {
   to {
     opacity: 1;
@@ -6865,6 +6952,29 @@ body:has(.utility-dialog[open]) {
     font-size: 42px;
   }
 
+  /* 移动端：弱化模块大标题，压缩到更紧凑的字号，一屏容纳更多信息 */
+  .nav-history-heading h2,
+  .holdings-heading h2,
+  .fund-profile-heading h2 {
+    font-size: 26px;
+    line-height: 1.15;
+  }
+
+  /* 移动端：隐藏纯装饰性的英文小标签（eyebrow），节省纵向空间 */
+  .nav-history-heading .eyebrow,
+  .holdings-heading .eyebrow,
+  .fund-profile-heading .eyebrow,
+  .compact-profile-summary .eyebrow {
+    display: none;
+  }
+
+  /* 移动端：收紧 eyebrow / section-label 与下方内容的间距 */
+  .eyebrow,
+  .section-label {
+    margin-bottom: 10px;
+    font-size: 10px;
+  }
+
   .dashboard-grid,
   .narrative-grid {
     grid-template-columns: 1fr;
@@ -6895,7 +7005,7 @@ body:has(.utility-dialog[open]) {
 
   .panel {
     min-height: auto;
-    padding: 30px 20px;
+    padding: 22px 16px;
     border-right: 0;
     border-bottom: 1px solid var(--line-strong);
   }
@@ -6910,7 +7020,7 @@ body:has(.utility-dialog[open]) {
 
   .narrative-grid article {
     min-height: 0;
-    padding: 34px 20px;
+    padding: 24px 16px;
   }
 
   .narrative-grid article:first-child {
@@ -6919,13 +7029,13 @@ body:has(.utility-dialog[open]) {
   }
 
   .nav-history-section {
-    padding: 52px 0 38px;
+    padding: 30px 0 24px;
   }
 
   .nav-history-heading {
     align-items: flex-start;
     flex-direction: column;
-    gap: 22px;
+    gap: 14px;
   }
 
   .nav-chart-controls {
@@ -6986,28 +7096,54 @@ body:has(.utility-dialog[open]) {
     grid-column: 1 / -1;
   }
 
+  /* 移动端：摘要指标条（涨幅/累计净值/分红共用）改为紧凑 3 列，
+     日期类的第 4 项跨整行，收紧内边距提升信息密度 */
   .nav-history-summary {
-    grid-template-columns: 1fr 1fr;
-    margin-top: 28px;
+    grid-template-columns: repeat(3, 1fr);
+    margin-top: 16px;
+  }
+
+  .nav-history-summary > div {
+    padding: 8px 10px;
+  }
+
+  .nav-history-summary > div:nth-child(4) {
+    display: none;
+  }
+
+  .nav-history-summary span {
+    font-size: 8px;
+  }
+
+  .nav-history-summary strong {
+    margin-top: 4px;
+    font-size: 13px;
   }
 
   .drawdown-comparison {
     grid-template-columns: 1fr;
   }
 
+  /* 移动端：回撤修复对照去掉整块标题（表头已含基金/赛道基准列名），
+     网格铺满屏宽不横向滚动，收紧单元格 */
   .drawdown-comparison > header {
-    border-right: 0;
-    border-bottom: 1px solid var(--line-strong);
+    display: none;
   }
 
   .drawdown-comparison-grid {
-    grid-template-columns: minmax(96px, 0.85fr) repeat(2, minmax(105px, 1fr));
-    overflow-x: auto;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1fr);
+    overflow-x: visible;
   }
 
   .drawdown-comparison-grid > span,
   .drawdown-comparison-grid > strong {
-    padding-inline: 10px;
+    min-height: 38px;
+    padding: 8px 10px;
+    font-size: 11px;
+  }
+
+  .drawdown-comparison-grid > span {
+    font-size: 9px;
   }
 
   .nav-chart-shell,
@@ -7017,12 +7153,12 @@ body:has(.utility-dialog[open]) {
   }
 
   #nav-history-chart.mobile-chart .nav-grid text {
-    font-size: 12px;
-    font-weight: 600;
+    font-size: 9px;
+    font-weight: 500;
   }
 
   #nav-history-chart.mobile-chart .nav-grid text.zero-label {
-    font-weight: 800;
+    font-weight: 700;
   }
 
   .drawdown-decline-line,
@@ -7078,13 +7214,13 @@ body:has(.utility-dialog[open]) {
   }
 
   .holdings-section {
-    padding: 58px 0 40px;
+    padding: 30px 0 24px;
   }
 
   .holdings-heading {
     align-items: flex-start;
     flex-direction: column;
-    gap: 24px;
+    gap: 14px;
   }
 
   .holdings-count {
@@ -7119,7 +7255,8 @@ body:has(.utility-dialog[open]) {
   .fund-profile-heading {
     align-items: flex-start;
     flex-direction: column;
-    padding-inline: 0;
+    gap: 8px;
+    padding: 22px 0 16px;
   }
 
   .fund-profile-heading > p {
@@ -7473,141 +7610,54 @@ body:has(.utility-dialog[open]) {
     gap: 7px;
   }
 
-  .stage-performance-list-heading,
-  .stage-performance-row {
-    gap: 8px;
-  }
-
+  /* 移动端：阶段涨幅表保持单行，横向滚动而非拆成多行卡片，节省纵向空间 */
   .stage-performance-mobile-help {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 8px;
-    margin-bottom: 10px;
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 9px;
-  }
-
-  .stage-performance-mobile-help > span {
-    margin-right: auto;
-    letter-spacing: 0.08em;
-  }
-
-  .stage-performance-mobile-help .stage-mobile-metric-help {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    width: auto;
-    height: 28px;
-    padding: 0 8px;
-    border: 1px solid var(--line-strong);
-    background: transparent;
-    color: var(--ink);
-    font: 700 9px/1 var(--mono);
-  }
-
-  .stage-performance-mobile-help .stage-mobile-metric-help b {
-    display: grid;
-    place-items: center;
-    width: 14px;
-    height: 14px;
-    border: 1px solid currentColor;
-    font-size: 8px;
+    display: none;
   }
 
   .stage-performance-scroll {
-    overflow-x: visible;
+    overflow-x: auto;
+    margin-inline: -14px;
+    padding-inline: 14px;
+  }
+
+  .stage-performance-list-heading,
+  .stage-performance-row {
+    grid-template-columns:
+      minmax(58px, 0.9fr)
+      repeat(3, minmax(64px, 0.85fr))
+      repeat(2, minmax(66px, 0.8fr));
+    min-width: 520px;
+    gap: 8px;
   }
 
   .stage-performance-list-heading {
-    display: none;
-  }
-
-  .stage-performance-list {
     display: grid;
-    gap: 11px;
-    border-bottom: 0;
   }
 
   .stage-performance-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    min-width: 0;
-    gap: 0;
-    padding: 0;
-    border: 1px solid var(--line-strong);
-    background: rgba(248, 245, 234, 0.42);
-  }
-
-  .stage-performance-row:last-child {
-    border-bottom: 1px solid var(--line-strong);
+    padding: 12px 4px;
+    font-size: 13px;
   }
 
   .stage-performance-row .stage-period {
-    grid-column: 1 / -1;
-    padding: 11px 12px;
-    border-bottom: 1px solid var(--ink);
-    background: rgba(217, 244, 71, 0.12);
-    font-family: var(--display);
-    font-size: 15px;
-    font-weight: 700;
+    font-size: 12px;
   }
 
-  .stage-performance-row > strong {
-    display: flex;
-    min-width: 0;
-    min-height: 64px;
-    align-items: flex-start;
-    justify-content: center;
-    flex-direction: column;
-    gap: 5px;
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--line);
-    text-align: left;
-    font-size: 18px;
-  }
-
-  .stage-performance-row > strong::before {
-    color: var(--muted);
-    content: attr(data-label);
-    font: 500 8px/1.2 var(--mono);
-    letter-spacing: 0.05em;
-  }
-
-  .stage-performance-row > strong:nth-child(2),
-  .stage-performance-row > strong:nth-child(5) {
-    border-right: 1px solid var(--line);
-  }
-
-  .stage-performance-row > strong:nth-child(4) {
-    grid-column: 1 / -1;
-    min-height: 52px;
-  }
-
-  .stage-performance-row > strong:nth-last-child(-n + 2) {
-    border-bottom: 0;
-  }
-
-  .stage-performance-row .benchmark-value,
-  .stage-performance-row .relative-value,
-  .stage-performance-row .risk-ratio-value {
-    align-items: flex-start;
-    justify-content: center;
-    font-size: 16px;
-    text-align: left;
-  }
-
-  .dividend-list-heading {
-    display: none;
-  }
-
+  .dividend-list-heading,
   .dividend-history-row {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 0.85fr) minmax(0, 1.5fr);
+    gap: 0;
+  }
+
+  .dividend-list-heading span,
+  .dividend-history-row > * {
+    padding: 9px 8px;
   }
 
   .dividend-history-row > span {
-    grid-column: 1 / -1;
-    border-top: 1px solid var(--line);
+    grid-column: auto;
+    border-top: 0;
     border-right: 0;
     white-space: normal;
   }

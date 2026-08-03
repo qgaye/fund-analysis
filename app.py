@@ -629,7 +629,9 @@ async def fund_holdings_by_period(
     fund_code: str,
     period: str = Query(
         ...,
-        description="报告期，格式为 YYYYQ1 至 YYYYQ4",
+        description=(
+            "报告期：季报 YYYYQ1—YYYYQ4、半年报 YYYYH 或年报 YYYYA"
+        ),
     ),
     holdings_limit: int = Query(default=20, ge=1, le=100),
     refresh: bool = Query(default=False, description="跳过十分钟内的缓存"),
@@ -641,10 +643,13 @@ async def fund_holdings_by_period(
             status_code=422,
             detail="基金代码必须是 6 位数字，例如 000001。",
         )
-    if not re.fullmatch(r"20\d{2}Q[1-4]", period_key):
+    if not re.fullmatch(r"20\d{2}(?:Q[1-4]|H|A)", period_key):
         raise HTTPException(
             status_code=422,
-            detail="报告期必须使用 YYYYQ1 至 YYYYQ4 格式。",
+            detail=(
+                "报告期必须使用 YYYYQ1—YYYYQ4（季报）、YYYYH（半年报）"
+                "或 YYYYA（年报）格式。"
+            ),
         )
 
     if not refresh:

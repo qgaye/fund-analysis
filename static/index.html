@@ -845,8 +845,18 @@
             <section class="quarter-report-panel" aria-labelledby="quarter-report-title">
               <header>
                 <div>
-                  <span class="section-label">QUARTERLY REPORT ARCHIVE</span>
-                  <h3 id="quarter-report-title">季度报告</h3>
+                  <span class="section-label">PERIODIC REPORT ARCHIVE</span>
+                  <h3 id="quarter-report-title">
+                    定期报告
+                    <button
+                      id="report-type-help-trigger"
+                      class="metric-help-trigger"
+                      type="button"
+                      aria-label="查看季报、半年报、年报的差异说明"
+                      aria-haspopup="dialog"
+                      aria-controls="report-type-help-dialog"
+                    >i</button>
+                  </h3>
                 </div>
                 <p>
                   <strong id="quarter-report-count">0</strong>
@@ -1858,6 +1868,35 @@
             </p>
           </aside>
         </div>
+      </div>
+    </dialog>
+
+    <dialog
+      id="report-type-help-dialog"
+      class="metric-help-dialog"
+      aria-labelledby="report-type-help-title"
+    >
+      <div class="metric-help-sheet">
+        <button
+          id="report-type-help-close"
+          class="metric-help-close"
+          type="button"
+          aria-label="关闭定期报告说明"
+        >
+          <span>关闭</span>
+          <b aria-hidden="true">×</b>
+        </button>
+
+        <header class="metric-help-heading">
+          <p class="eyebrow">PERIODIC REPORT GUIDE / 定期报告说明</p>
+          <h2 id="report-type-help-title">季报、半年报、年报有什么区别？</h2>
+          <p>
+            公募基金的定期报告披露频率、时限和详尽程度各不相同：季报最快但只有前十大持仓，
+            年报最全且经过审计但发布最晚。切换报告期时可据此判断看到的是哪种口径。
+          </p>
+        </header>
+
+        <div id="report-type-help-content" class="metric-help-content"></div>
       </div>
     </dialog>
 
