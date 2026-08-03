@@ -13,7 +13,47 @@ from zoneinfo import ZoneInfo
 
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
-WATCHLIST_VERSION = 1
+WATCHLIST_VERSION = 2
+WATCHLIST_TAG_LIMIT = 12
+WATCHLIST_TAG_LENGTH = 24
+
+
+def default_watchlist_tag(fund_type: str) -> str:
+    """把详细基金类型归并为便于浏览的默认标签。"""
+
+    value = str(fund_type or "")
+    if "货币" in value:
+        return "货币"
+    if "QDII" in value or "海外" in value:
+        return "QDII"
+    if "债" in value or "固收" in value:
+        return "债基"
+    if "指数" in value or "ETF" in value or "联接" in value:
+        return "指数"
+    if "FOF" in value:
+        return "FOF"
+    if "股票" in value or "偏股" in value or "混合" in value:
+        return "偏股"
+    return "其他"
+
+
+def normalize_watchlist_tags(values: Any) -> list[str]:
+    """清洗、去重并限制本地自选标签。"""
+
+    if not isinstance(values, (list, tuple, set)):
+        values = []
+    tags: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        tag = " ".join(str(value or "").strip().split())[:WATCHLIST_TAG_LENGTH]
+        key = tag.casefold()
+        if not tag or key in seen:
+            continue
+        seen.add(key)
+        tags.append(tag)
+        if len(tags) >= WATCHLIST_TAG_LIMIT:
+            break
+    return tags
 
 
 class WatchlistFileStore:
@@ -44,8 +84,32 @@ class WatchlistFileStore:
             raise RuntimeError(f"自选组合文件读取失败：{exc}") from exc
         if not isinstance(payload, dict) or not isinstance(payload.get("funds"), list):
             raise RuntimeError("自选组合文件格式无效。")
-        payload.setdefault("version", WATCHLIST_VERSION)
+        migrated = payload.get("version") != WATCHLIST_VERSION
+        for item in payload["funds"]:
+            if not isinstance(item, dict):
+                continue
+            tags = normalize_watchlist_tags(item.get("tags"))
+            legacy_category = str(item.get("category") or "").strip()
+            if not tags:
+                initial_tags = [
+                    default_watchlist_tag(str(item.get("fund_type") or ""))
+                ]
+                if legacy_category and legacy_category != "未分类":
+                    initial_tags.append(legacy_category)
+                tags = normalize_watchlist_tags(initial_tags)
+            if item.get("tags") != tags:
+                item["tags"] = tags
+                migrated = True
+            if "category" in item:
+                item.pop("category", None)
+                migrated = True
+            if "custom_name" in item:
+                item.pop("custom_name", None)
+                migrated = True
+        payload["version"] = WATCHLIST_VERSION
         payload.setdefault("updated_at", None)
+        if migrated:
+            self._write_unlocked(payload)
         return payload
 
     def _write_unlocked(self, payload: dict[str, Any]) -> None:
@@ -82,8 +146,7 @@ class WatchlistFileStore:
         *,
         name: str,
         fund_type: str,
-        category: str,
-        custom_name: str,
+        tags: list[str],
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         with self._lock:
             payload = self._read_unlocked()
@@ -95,15 +158,20 @@ class WatchlistFileStore:
             if existing is None:
                 existing = {"code": code, "added_at": now}
                 payload["funds"].insert(0, existing)
+            official_name = str(existing.get("name") or name)
+            cleaned_tags = normalize_watchlist_tags(tags)
+            if not cleaned_tags:
+                cleaned_tags = [default_watchlist_tag(fund_type)]
             existing.update(
                 {
-                    "name": name,
+                    "name": official_name,
                     "fund_type": fund_type,
-                    "category": category,
-                    "custom_name": custom_name,
+                    "tags": cleaned_tags,
                     "updated_at": now,
                 }
             )
+            existing.pop("category", None)
+            existing.pop("custom_name", None)
             payload["updated_at"] = now
             self._write_unlocked(payload)
             return dict(existing), payload

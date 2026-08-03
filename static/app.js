@@ -4874,22 +4874,20 @@ searchHistoryDialog?.addEventListener("click", (event) => {
 const watchlistDialog = document.querySelector("#watchlist-dialog");
 const watchlistListEl = document.querySelector("#watchlist-list");
 const watchlistEmptyEl = document.querySelector("#watchlist-empty");
-const watchlistFiltersEl = document.querySelector("#watchlist-filters");
+const watchlistTagFiltersEl = document.querySelector("#watchlist-tag-filters");
 const watchlistFeedbackEl = document.querySelector("#watchlist-feedback");
 const watchlistCountEl = document.querySelector("#watchlist-count");
 const watchlistTotalEl = document.querySelector("#watchlist-total");
-const watchlistCategoryOptionsEl = document.querySelector(
-  "#watchlist-category-options",
-);
-let watchlistData = { 基金: [], 总数: 0, 分类建议: [] };
-let watchlistActiveCategory = "全部";
+let watchlistData = { 基金: [], 总数: 0, 标签建议: [] };
+let watchlistActiveTag = "全部";
 
-function inferWatchlistCategory(fundType) {
+function inferWatchlistTypeTag(fundType) {
   const value = String(fundType || "");
   if (/货币/.test(value)) return "货币";
   if (/QDII|海外/.test(value)) return "QDII";
   if (/债|固收/.test(value)) return "债基";
   if (/指数|ETF|联接/.test(value)) return "指数";
+  if (/FOF/.test(value)) return "FOF";
   if (/股票|偏股|混合/.test(value)) return "偏股";
   return "其他";
 }
@@ -4916,7 +4914,7 @@ function applyWatchlistPayload(payload) {
   watchlistData = {
     基金: Array.isArray(payload?.基金) ? payload.基金 : [],
     总数: Number(payload?.总数) || 0,
-    分类建议: Array.isArray(payload?.分类建议) ? payload.分类建议 : [],
+    标签建议: Array.isArray(payload?.标签建议) ? payload.标签建议 : [],
   };
   watchlistCountEl.textContent = String(watchlistData.总数);
   watchlistTotalEl.textContent = `${watchlistData.总数} FUNDS`;
@@ -4950,8 +4948,7 @@ async function saveWatchlistItem(item, updates = {}) {
     body: JSON.stringify({
       name: item.name || "",
       fund_type: item.fund_type || "",
-      category: updates.category ?? item.category ?? "未分类",
-      custom_name: updates.custom_name ?? item.custom_name ?? "",
+      tags: updates.tags ?? item.tags ?? [],
     }),
   });
   return readApiPayload(response);
@@ -4963,28 +4960,35 @@ async function removeWatchlistItem(code) {
   );
 }
 
-function renderWatchlistFilters(items) {
+function renderWatchlistTagFilters(items) {
   const counts = new Map();
   items.forEach((item) => {
-    const category = item.category || "未分类";
-    counts.set(category, (counts.get(category) || 0) + 1);
+    (item.tags || []).forEach((tag) => {
+      counts.set(tag, (counts.get(tag) || 0) + 1);
+    });
   });
-  const categories = ["全部", ...counts.keys()];
-  if (!categories.includes(watchlistActiveCategory)) {
-    watchlistActiveCategory = "全部";
+  if (watchlistActiveTag !== "全部" && !counts.has(watchlistActiveTag)) {
+    watchlistActiveTag = "全部";
   }
-  watchlistFiltersEl.replaceChildren();
-  categories.forEach((category) => {
+
+  watchlistTagFiltersEl.replaceChildren();
+  [["全部", items.length], ...counts.entries()].forEach(([tag, count]) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "watchlist-filter";
-    button.classList.toggle("active", category === watchlistActiveCategory);
-    button.textContent = `${category} ${category === "全部" ? items.length : counts.get(category)}`;
+    button.className = "watchlist-tag-filter";
+    button.classList.toggle("active", tag === watchlistActiveTag);
+    button.setAttribute("aria-pressed", String(tag === watchlistActiveTag));
+
+    const name = document.createElement("span");
+    name.textContent = tag;
+    const total = document.createElement("small");
+    total.textContent = String(count).padStart(2, "0");
+    button.append(name, total);
     button.addEventListener("click", () => {
-      watchlistActiveCategory = category;
+      watchlistActiveTag = tag;
       renderWatchlist();
     });
-    watchlistFiltersEl.append(button);
+    watchlistTagFiltersEl.append(button);
   });
 }
 
@@ -4992,35 +4996,106 @@ function createWatchlistEditor(item, card) {
   const form = document.createElement("form");
   form.className = "watchlist-editor";
   form.hidden = true;
+  let selectedTags = [...new Set((item.tags || []).filter(Boolean))].slice(0, 12);
 
-  const aliasField = document.createElement("label");
-  aliasField.textContent = "自定义名称";
-  const aliasInput = document.createElement("input");
-  aliasInput.type = "text";
-  aliasInput.maxLength = 80;
-  aliasInput.placeholder = item.name || "给这只基金起个名字";
-  aliasInput.value = item.custom_name || "";
-  aliasField.append(aliasInput);
+  const heading = document.createElement("div");
+  heading.className = "watchlist-editor-heading";
+  const headingText = document.createElement("strong");
+  headingText.textContent = "管理标签";
+  const headingNote = document.createElement("small");
+  headingNote.textContent = "最多 12 个";
+  heading.append(headingText, headingNote);
 
-  const categoryField = document.createElement("label");
-  categoryField.textContent = "组合分类";
-  const categoryInput = document.createElement("input");
-  categoryInput.type = "text";
-  categoryInput.maxLength = 40;
-  categoryInput.setAttribute("list", "watchlist-category-options");
-  categoryInput.placeholder = "例如：债基 / 偏股 / 核心仓";
-  categoryInput.value = item.category || "未分类";
-  categoryField.append(categoryInput);
+  const selected = document.createElement("div");
+  selected.className = "watchlist-editor-tags";
+
+  const inputRow = document.createElement("div");
+  inputRow.className = "watchlist-tag-input-row";
+  const tagField = document.createElement("label");
+  tagField.textContent = "添加自定义标签";
+  const tagInput = document.createElement("input");
+  tagInput.type = "text";
+  tagInput.maxLength = 24;
+  tagInput.placeholder = "例如：核心观察";
+  tagField.append(tagInput);
+  const addButton = document.createElement("button");
+  addButton.type = "button";
+  addButton.textContent = "添加";
+  inputRow.append(tagField, addButton);
+
+  const suggestions = document.createElement("div");
+  suggestions.className = "watchlist-tag-suggestions";
 
   const actions = document.createElement("div");
+  actions.className = "watchlist-editor-actions";
   const cancel = document.createElement("button");
   cancel.type = "button";
   cancel.textContent = "取消";
   const save = document.createElement("button");
   save.type = "submit";
-  save.textContent = "保存修改";
+  save.textContent = "保存标签";
   actions.append(cancel, save);
-  form.append(aliasField, categoryField, actions);
+  form.append(heading, selected, inputRow, suggestions, actions);
+
+  const hasTag = (tag) =>
+    selectedTags.some((current) => current.toLocaleLowerCase() === tag.toLocaleLowerCase());
+
+  function renderTagEditor() {
+    selected.replaceChildren();
+    if (!selectedTags.length) {
+      const empty = document.createElement("span");
+      empty.className = "watchlist-tags-empty";
+      empty.textContent = "尚未添加标签，保存后会自动补充基金类型标签";
+      selected.append(empty);
+    } else {
+      selectedTags.forEach((tag) => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "watchlist-tag removable";
+        chip.setAttribute("aria-label", `移除标签 ${tag}`);
+        chip.textContent = `${tag} ×`;
+        chip.addEventListener("click", () => {
+          selectedTags = selectedTags.filter((current) => current !== tag);
+          renderTagEditor();
+        });
+        selected.append(chip);
+      });
+    }
+
+    suggestions.replaceChildren();
+    const label = document.createElement("span");
+    label.textContent = "快捷标签";
+    suggestions.append(label);
+    (watchlistData.标签建议 || []).forEach((tag) => {
+      const choice = document.createElement("button");
+      choice.type = "button";
+      choice.className = "watchlist-tag-choice";
+      choice.textContent = tag;
+      choice.disabled = hasTag(tag) || selectedTags.length >= 12;
+      choice.addEventListener("click", () => {
+        if (selectedTags.length < 12 && !hasTag(tag)) selectedTags.push(tag);
+        renderTagEditor();
+      });
+      suggestions.append(choice);
+    });
+  }
+
+  function addCustomTag() {
+    const tag = tagInput.value.trim().replace(/\s+/g, " ");
+    if (!tag || selectedTags.length >= 12 || hasTag(tag)) return;
+    selectedTags.push(tag);
+    tagInput.value = "";
+    renderTagEditor();
+    tagInput.focus();
+  }
+
+  addButton.addEventListener("click", addCustomTag);
+  tagInput.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    addCustomTag();
+  });
+  renderTagEditor();
 
   cancel.addEventListener("click", () => {
     form.hidden = true;
@@ -5032,18 +5107,17 @@ function createWatchlistEditor(item, card) {
     save.textContent = "保存中…";
     try {
       const payload = await saveWatchlistItem(item, {
-        custom_name: aliasInput.value.trim(),
-        category: categoryInput.value.trim() || "未分类",
+        tags: selectedTags,
       });
       applyWatchlistPayload(payload);
-      setWatchlistFeedback("名称与分类已写入本地文件");
+      setWatchlistFeedback("标签已写入本地文件");
     } catch (error) {
       setWatchlistFeedback(error.message || "保存失败", true);
       save.disabled = false;
-      save.textContent = "保存修改";
+      save.textContent = "保存标签";
     }
   });
-  return { form, aliasInput };
+  return { form, tagInput };
 }
 
 function createWatchlistCard(item, index) {
@@ -5062,17 +5136,20 @@ function createWatchlistCard(item, index) {
   const identity = document.createElement("span");
   identity.className = "watchlist-identity";
   const displayName = document.createElement("strong");
-  displayName.textContent = item.custom_name || item.name || "未命名基金";
-  const originalName = document.createElement("small");
-  originalName.textContent = item.custom_name
-    ? `${item.name || "基金原名未知"} · ${item.code}`
-    : `${item.code} · ${item.fund_type || "类型未知"}`;
-  identity.append(displayName, originalName);
+  displayName.textContent = item.name || "未命名基金";
+  const metadata = document.createElement("small");
+  metadata.textContent = `${item.code} · ${item.fund_type || "类型未知"}`;
+  identity.append(displayName, metadata);
 
-  const category = document.createElement("span");
-  category.className = "watchlist-category";
-  category.textContent = item.category || "未分类";
-  main.append(order, identity, category);
+  const tags = document.createElement("span");
+  tags.className = "watchlist-tags";
+  (item.tags || []).forEach((tag) => {
+    const chip = document.createElement("span");
+    chip.className = "watchlist-tag";
+    chip.textContent = tag;
+    tags.append(chip);
+  });
+  main.append(order, identity, tags);
   main.addEventListener("click", () => {
     watchlistDialog.close();
     queryFund(item.code);
@@ -5082,14 +5159,14 @@ function createWatchlistCard(item, index) {
   controls.className = "watchlist-card-controls";
   const edit = document.createElement("button");
   edit.type = "button";
-  edit.textContent = "编辑";
+  edit.textContent = "标签";
   const remove = document.createElement("button");
   remove.type = "button";
   remove.className = "danger";
   remove.textContent = "移除";
   controls.append(edit, remove);
 
-  const { form: editor, aliasInput } = createWatchlistEditor(item, card);
+  const { form: editor, tagInput } = createWatchlistEditor(item, card);
   edit.addEventListener("click", () => {
     const opening = editor.hidden;
     document.querySelectorAll(".watchlist-editor").forEach((form) => {
@@ -5098,14 +5175,14 @@ function createWatchlistCard(item, index) {
     });
     editor.hidden = !opening;
     card.classList.toggle("editing", opening);
-    if (opening) aliasInput.focus();
+    if (opening) tagInput.focus();
   });
   remove.addEventListener("click", async () => {
     remove.disabled = true;
     remove.textContent = "移除中…";
     try {
       applyWatchlistPayload(await removeWatchlistItem(item.code));
-      setWatchlistFeedback(`已移除 ${item.custom_name || item.name || item.code}`);
+      setWatchlistFeedback(`已移除 ${item.name || item.code}`);
     } catch (error) {
       setWatchlistFeedback(error.message || "移除失败", true);
       remove.disabled = false;
@@ -5119,24 +5196,11 @@ function createWatchlistCard(item, index) {
 
 function renderWatchlist() {
   const items = watchlistData.基金 || [];
-  renderWatchlistFilters(items);
-  const categoryOptions = new Set([
-    ...(watchlistData.分类建议 || []),
-    ...items.map((item) => item.category).filter(Boolean),
-  ]);
-  watchlistCategoryOptionsEl.replaceChildren();
-  categoryOptions.forEach((category) => {
-    const option = document.createElement("option");
-    option.value = category;
-    watchlistCategoryOptionsEl.append(option);
-  });
-
+  renderWatchlistTagFilters(items);
   const visibleItems =
-    watchlistActiveCategory === "全部"
+    watchlistActiveTag === "全部"
       ? items
-      : items.filter(
-          (item) => (item.category || "未分类") === watchlistActiveCategory,
-        );
+      : items.filter((item) => (item.tags || []).includes(watchlistActiveTag));
   watchlistListEl.replaceChildren();
   visibleItems.forEach((item, index) => {
     watchlistListEl.append(createWatchlistCard(item, index));
@@ -5167,8 +5231,7 @@ favoriteButton?.addEventListener("click", async () => {
       ? await removeWatchlistItem(currentFundSnapshot.code)
       : await saveWatchlistItem({
           ...currentFundSnapshot,
-          category: inferWatchlistCategory(currentFundSnapshot.fund_type),
-          custom_name: "",
+          tags: [inferWatchlistTypeTag(currentFundSnapshot.fund_type)],
         });
     applyWatchlistPayload(payload);
   } catch (error) {

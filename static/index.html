@@ -13,6 +13,7 @@
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%23f1eddf' stroke='%23151916' stroke-width='3'/%3E%3Ctext x='32' y='38' text-anchor='middle' font-family='serif' font-size='18' font-weight='700' fill='%23151916'%3EFL%3C/text%3E%3C/svg%3E"
     />
     <link rel="stylesheet" href="/static/styles.css?v=20260802.16" />
+    <link rel="stylesheet" href="/static/watchlist.css?v=20260803.2" />
   </head>
   <body>
     <div class="paper-noise" aria-hidden="true"></div>
@@ -1211,13 +1212,20 @@
             <span id="watchlist-total">0 FUNDS</span>
           </div>
           <p>
-            把值得持续观察的基金收进同一份研究清单。名称与分类可以自由编辑，数据只写入本机
+            把值得持续观察的基金收进同一份研究清单。基金名称保持官方名称，每只基金可拥有多个标签，数据只写入本机
             <code>.data/watchlist.json</code>。
           </p>
         </header>
 
-        <section class="watchlist-toolbar" aria-label="自选基金分类筛选">
-          <div id="watchlist-filters" class="watchlist-filters"></div>
+        <section class="watchlist-toolbar" aria-label="按标签筛选自选基金">
+          <div class="watchlist-filter-shell">
+            <strong>TAG FILTER</strong>
+            <div
+              id="watchlist-tag-filters"
+              class="watchlist-tag-filters"
+              aria-label="标签快速筛选"
+            ></div>
+          </div>
           <span id="watchlist-feedback" class="watchlist-feedback" aria-live="polite"></span>
         </section>
 
@@ -1230,15 +1238,6 @@
             <p>查询基金后，点击档案右侧的“收藏基金”，它会自动出现在这里。</p>
           </div>
         </section>
-
-        <datalist id="watchlist-category-options">
-          <option value="债基"></option>
-          <option value="偏股"></option>
-          <option value="指数"></option>
-          <option value="货币"></option>
-          <option value="QDII"></option>
-          <option value="其他"></option>
-        </datalist>
       </div>
     </dialog>
 
@@ -1871,6 +1870,6 @@
       <span>PUBLIC DATA · CLEAR VIEW</span>
     </footer>
 
-    <script src="/static/app.js?v=20260802.18" defer></script>
+    <script src="/static/app.js?v=20260803.2" defer></script>
   </body>
 </html>

@@ -40,7 +40,11 @@ from fund_lookup import (
 )
 from stock_cache import StockFileCache
 from stock_lookup import StockLookupError, get_stock_data
-from watchlist_store import WatchlistFileStore
+from watchlist_store import (
+    WatchlistFileStore,
+    default_watchlist_tag,
+    normalize_watchlist_tags,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -70,16 +74,15 @@ _stock_file_cache = StockFileCache(
 )
 _stock_request_locks: dict[str, asyncio.Lock] = {}
 _watchlist_store = WatchlistFileStore(BASE_DIR / ".data" / "watchlist.json")
-WATCHLIST_CATEGORY_SUGGESTIONS = ["债基", "偏股", "指数", "货币", "QDII", "其他"]
+WATCHLIST_TAG_SUGGESTIONS = ["红利", "固收+", "成长", "价值", "低波"]
 
 
 class WatchlistFundInput(BaseModel):
-    """收藏基金可由基金详情自动填充，也允许用户自定义显示信息。"""
+    """收藏基金使用官方名称，并允许维护多个本地标签。"""
 
     name: str = Field(default="", max_length=120)
     fund_type: str = Field(default="", max_length=80)
-    category: str = Field(default="未分类", max_length=40)
-    custom_name: str = Field(default="", max_length=80)
+    tags: list[str] = Field(default_factory=list, max_length=12)
 
 
 def _clean_watchlist_text(value: str, *, fallback: str = "") -> str:
@@ -96,7 +99,7 @@ def _watchlist_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "基金": payload.get("funds", []),
         "总数": len(payload.get("funds", [])),
         "更新时间": payload.get("updated_at"),
-        "分类建议": WATCHLIST_CATEGORY_SUGGESTIONS,
+        "标签建议": WATCHLIST_TAG_SUGGESTIONS,
         "存储文件": storage_file,
     }
 
@@ -206,15 +209,15 @@ async def watchlist_upsert(
         )
     name = _clean_watchlist_text(fund.name)
     fund_type = _clean_watchlist_text(fund.fund_type)
-    category = _clean_watchlist_text(fund.category, fallback="未分类")
-    custom_name = _clean_watchlist_text(fund.custom_name)
+    tags = normalize_watchlist_tags(fund.tags)
+    if not tags:
+        tags = [default_watchlist_tag(fund_type)]
     try:
         item, payload = _watchlist_store.upsert(
             code,
             name=name,
             fund_type=fund_type,
-            category=category,
-            custom_name=custom_name,
+            tags=tags,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

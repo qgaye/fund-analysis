@@ -67,15 +67,15 @@ class FundApiTests(unittest.IsolatedAsyncioTestCase):
                     WatchlistFundInput(
                         name=" 测试基金 ",
                         fund_type="混合型",
-                        category=" 偏股 ",
-                        custom_name=" 核心仓 ",
+                        tags=[" 偏股 ", "成长", "成长"],
                     ),
                 )
                 listed = await watchlist_detail()
                 removed = await watchlist_remove("000001")
 
-        self.assertEqual(saved["基金项"]["category"], "偏股")
-        self.assertEqual(saved["基金项"]["custom_name"], "核心仓")
+        self.assertEqual(saved["基金项"]["name"], "测试基金")
+        self.assertEqual(saved["基金项"]["tags"], ["偏股", "成长"])
+        self.assertEqual(saved["标签建议"], ["红利", "固收+", "成长", "价值", "低波"])
         self.assertEqual(listed["总数"], 1)
         self.assertEqual(listed["基金"][0]["code"], "000001")
         self.assertTrue(removed["已移除"])
