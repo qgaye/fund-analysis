@@ -21,9 +21,9 @@ _PERIOD_KEY = re.compile(r"20\d{2}Q[1-4]")
 class FundFileCache:
     """按基金代码持久化，并在工作日收盘后更新。"""
 
-    # v7 adds 基础资料.基金经理 / 基金公司. Old v6 records must be
-    # refreshed because they otherwise look fresh until the next close.
-    VERSION = 7
+    # v8 adds 基础资料.基金经理.历史经理 / 组合变更. Old v7 records
+    # must be refreshed because they otherwise look fresh until the next close.
+    VERSION = 8
 
     def __init__(
         self,

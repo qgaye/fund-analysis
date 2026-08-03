@@ -30,6 +30,7 @@ from fund_lookup import (
     _parse_target_fund_holdings,
     _parse_holder_structure,
     _parse_fund_manager_index,
+    _parse_fund_manager_history,
     _parse_holding_period_bounds,
     _parse_purchase_fee_table,
     _parse_manager_profile,
@@ -142,6 +143,52 @@ class FundLookupTests(unittest.TestCase):
         self.assertEqual(managers[0]["姓名"], "郑晓辉")
         self.assertEqual(managers[0]["上任日期"], "2024-12-26")
         self.assertEqual(managers[0]["照片"], "https://img.test/a.jpg")
+
+    def test_parse_fund_manager_history_separates_people_and_combinations(self) -> None:
+        html = """
+        <table><thead><tr>
+          <th>起始期</th><th>截止期</th><th>基金经理</th>
+          <th>任职期间</th><th>任职回报</th>
+        </tr></thead><tbody>
+          <tr><td>2022-06-13</td><td>至今</td><td>
+            <a href="/manager/30301680.html">赵蓓</a>
+          </td><td>4年</td><td>-7.05%</td></tr>
+          <tr><td>2022-03-21</td><td>2022-06-12</td><td>
+            <a href="/manager/30301680.html">赵蓓</a>
+            <a href="/manager/30487957.html">谭冬寒</a>
+          </td><td>83天</td><td>-3.86%</td></tr>
+          <tr><td>2020-05-20</td><td>2022-03-20</td><td>
+            <a href="/manager/30301680.html">赵蓓</a>
+          </td><td>1年</td><td>27.82%</td></tr>
+          <tr><td>2019-12-02</td><td>2020-05-19</td><td>
+            <a href="/manager/30301680.html">赵蓓</a>
+            <a href="/manager/30487957.html">谭冬寒</a>
+          </td><td>169天</td><td>48.86%</td></tr>
+          <tr><td>2016-02-03</td><td>2019-12-01</td><td>
+            <a href="/manager/30301680.html">赵蓓</a>
+          </td><td>3年</td><td>89.10%</td></tr>
+        </tbody></table>
+        """
+
+        result = _parse_fund_manager_history(html)
+
+        self.assertEqual(len(result["组合变更"]), 5)
+        self.assertTrue(result["组合变更"][0]["当前组合"])
+        self.assertEqual(
+            [manager["姓名"] for manager in result["组合变更"][1]["经理"]],
+            ["赵蓓", "谭冬寒"],
+        )
+        self.assertEqual(len(result["历史经理"]), 1)
+        former = result["历史经理"][0]
+        self.assertEqual(former["姓名"], "谭冬寒")
+        self.assertEqual(former["任职次数"], 2)
+        self.assertEqual(
+            former["任职区间"],
+            [
+                {"起始日期": "2019-12-02", "截止日期": "2020-05-19"},
+                {"起始日期": "2022-03-21", "截止日期": "2022-06-12"},
+            ],
+        )
 
     def test_parse_manager_profile_includes_experience_and_fund_tenure(self) -> None:
         html = """

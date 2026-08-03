@@ -1,0 +1,40 @@
+{
+  "id": "/search",
+  "name": "基金透镜 · 查询基金",
+  "short_name": "查询基金",
+  "description": "通过代码、名称或拼音查询基金。",
+  "lang": "zh-CN",
+  "start_url": "/search",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f1eddf",
+  "theme_color": "#151916",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    {
+      "src": "/static/icons/app-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/icons/app-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/icons/app-icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "打开我的收藏",
+      "short_name": "我的收藏",
+      "url": "/watchlist"
+    }
+  ]
+}

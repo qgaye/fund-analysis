@@ -74,7 +74,7 @@ _stock_file_cache = StockFileCache(
 )
 _stock_request_locks: dict[str, asyncio.Lock] = {}
 _watchlist_store = WatchlistFileStore(BASE_DIR / ".data" / "watchlist.json")
-WATCHLIST_TAG_SUGGESTIONS = ["红利", "固收+", "成长", "价值", "低波"]
+WATCHLIST_TAG_SUGGESTIONS = ["持有中", "红利", "固收+", "成长", "价值", "低波"]
 
 
 class WatchlistFundInput(BaseModel):
@@ -91,6 +91,25 @@ def _clean_watchlist_text(value: str, *, fallback: str = "") -> str:
 
 
 def _watchlist_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    tag_suggestions: list[str] = []
+    seen_tags: set[str] = set()
+    for item in payload.get("funds", []):
+        if not isinstance(item, dict):
+            continue
+        values = item.get("tags", [])
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            tag = str(value or "").strip()
+            key = tag.casefold()
+            if tag and key not in seen_tags:
+                seen_tags.add(key)
+                tag_suggestions.append(tag)
+    for tag in WATCHLIST_TAG_SUGGESTIONS:
+        key = tag.casefold()
+        if key not in seen_tags:
+            seen_tags.add(key)
+            tag_suggestions.append(tag)
     try:
         storage_file = str(_watchlist_store.path.relative_to(BASE_DIR))
     except ValueError:
@@ -99,7 +118,7 @@ def _watchlist_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "基金": payload.get("funds", []),
         "总数": len(payload.get("funds", [])),
         "更新时间": payload.get("updated_at"),
-        "标签建议": WATCHLIST_TAG_SUGGESTIONS,
+        "标签建议": tag_suggestions,
         "存储文件": storage_file,
     }
 
@@ -175,6 +194,32 @@ def _stock_response(
 async def index() -> FileResponse:
     return FileResponse(
         STATIC_DIR / "index.html",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
+
+
+@app.get("/watchlist", include_in_schema=False)
+@app.get("/watchlist/", include_in_schema=False)
+async def watchlist_page() -> FileResponse:
+    return FileResponse(
+        STATIC_DIR / "watchlist.html",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
+
+
+@app.get("/search", include_in_schema=False)
+@app.get("/search/", include_in_schema=False)
+async def search_page() -> FileResponse:
+    return FileResponse(
+        STATIC_DIR / "search.html",
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "Pragma": "no-cache",

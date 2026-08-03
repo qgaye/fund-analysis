@@ -1,0 +1,61 @@
+{
+  "id": "/",
+  "name": "基金透镜 · 基金研究台",
+  "short_name": "基金透镜",
+  "description": "穿透基金净值、费率、业绩基准与季度持仓。",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f1eddf",
+  "theme_color": "#151916",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    {
+      "src": "/static/icons/app-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/icons/app-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/icons/app-icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "查询基金",
+      "short_name": "查询",
+      "description": "通过代码、名称或拼音查询基金。",
+      "url": "/search",
+      "icons": [
+        {
+          "src": "/static/icons/app-icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "我的收藏",
+      "short_name": "收藏",
+      "description": "直接打开基金收藏。",
+      "url": "/watchlist",
+      "icons": [
+        {
+          "src": "/static/icons/app-icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ]
+}

@@ -19,15 +19,35 @@ from app import (
     fund_holdings_by_period,
     fund_search,
     health,
+    search_page,
     stock_detail,
     WatchlistFundInput,
     watchlist_detail,
+    watchlist_page,
     watchlist_remove,
     watchlist_upsert,
 )
 
 
 class FundApiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_search_page_uses_dedicated_static_file(self) -> None:
+        response = await search_page()
+
+        self.assertEqual(Path(response.path).name, "search.html")
+        self.assertEqual(
+            response.headers["cache-control"],
+            "no-cache, no-store, must-revalidate",
+        )
+
+    async def test_watchlist_page_uses_dedicated_static_file(self) -> None:
+        response = await watchlist_page()
+
+        self.assertEqual(Path(response.path).name, "watchlist.html")
+        self.assertEqual(
+            response.headers["cache-control"],
+            "no-cache, no-store, must-revalidate",
+        )
+
     async def test_health(self) -> None:
         self.assertEqual(await health(), {"status": "ok"})
 
@@ -67,15 +87,30 @@ class FundApiTests(unittest.IsolatedAsyncioTestCase):
                     WatchlistFundInput(
                         name=" 测试基金 ",
                         fund_type="混合型",
-                        tags=[" 偏股 ", "成长", "成长"],
+                        tags=[" 偏股 ", "成长", "自定义观察", "成长"],
                     ),
                 )
                 listed = await watchlist_detail()
                 removed = await watchlist_remove("000001")
 
         self.assertEqual(saved["基金项"]["name"], "测试基金")
-        self.assertEqual(saved["基金项"]["tags"], ["偏股", "成长"])
-        self.assertEqual(saved["标签建议"], ["红利", "固收+", "成长", "价值", "低波"])
+        self.assertEqual(
+            saved["基金项"]["tags"],
+            ["偏股", "成长", "自定义观察"],
+        )
+        self.assertEqual(
+            saved["标签建议"],
+            [
+                "偏股",
+                "成长",
+                "自定义观察",
+                "持有中",
+                "红利",
+                "固收+",
+                "价值",
+                "低波",
+            ],
+        )
         self.assertEqual(listed["总数"], 1)
         self.assertEqual(listed["基金"][0]["code"], "000001")
         self.assertTrue(removed["已移除"])

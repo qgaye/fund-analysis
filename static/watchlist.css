@@ -5,6 +5,54 @@
   gap: 14px;
 }
 
+.watchlist-dialog-actions {
+  position: sticky;
+  z-index: 8;
+  top: 0;
+  float: right;
+  display: flex;
+  align-items: stretch;
+}
+
+.watchlist-page-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  margin: 0;
+  padding: 0 14px;
+  border: 0;
+  border-left: 1px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+  background: var(--acid);
+  color: var(--ink);
+  font: 700 9px/1 var(--mono);
+  letter-spacing: 0.06em;
+  text-decoration: none;
+  transition:
+    background 150ms ease,
+    color 150ms ease,
+    transform 150ms ease;
+}
+
+.watchlist-page-link b {
+  font-size: 15px;
+  font-weight: 400;
+}
+
+.watchlist-page-link:hover,
+.watchlist-page-link:focus-visible {
+  background: var(--ink);
+  color: var(--paper-light);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.watchlist-dialog-actions .watchlist-close {
+  position: static;
+  float: none;
+}
+
 .watchlist-filter-shell > strong {
   flex: 0 0 auto;
   color: var(--red);
@@ -81,6 +129,153 @@
   white-space: nowrap;
 }
 
+:is(.watchlist-tag, .watchlist-tag-filter, .watchlist-tag-choice)[data-tag-tone] {
+  --tag-bg: #e9e4d6;
+  --tag-border: #9f9682;
+  --tag-text: #4d4638;
+  --tag-strong: #4d4638;
+  --tag-active-text: #fffdf5;
+}
+
+:is(.watchlist-tag, .watchlist-tag-filter, .watchlist-tag-choice)[data-tag-tone="holding"] {
+  --tag-bg: #d9f447;
+  --tag-border: #768817;
+  --tag-text: #293200;
+  --tag-strong: #465300;
+}
+
+:is(.watchlist-tag, .watchlist-tag-filter, .watchlist-tag-choice)[data-tag-tone="bond"] {
+  --tag-bg: #dbeaf2;
+  --tag-border: #7698aa;
+  --tag-text: #24485a;
+  --tag-strong: #315f75;
+}
+
+:is(.watchlist-tag, .watchlist-tag-filter, .watchlist-tag-choice)[data-tag-tone="equity"] {
+  --tag-bg: #f1d7d0;
+  --tag-border: #b96f60;
+  --tag-text: #722a20;
+  --tag-strong: #923b2f;
+}
+
+:is(.watchlist-tag, .watchlist-tag-filter, .watchlist-tag-choice)[data-tag-tone="index"] {
+  --tag-bg: #dce2f3;
+  --tag-border: #7b88b3;
+  --tag-text: #303d70;
+  --tag-strong: #43538c;
+}
+
+:is(.watchlist-tag, .watchlist-tag-filter, .watchlist-tag-choice)[data-tag-tone="growth"] {
+  --tag-bg: #f2dfb5;
+  --tag-border: #b88b32;
+  --tag-text: #62450c;
+  --tag-strong: #805b12;
+}
+
+:is(.watchlist-tag, .watchlist-tag-filter, .watchlist-tag-choice)[data-tag-tone="value"] {
+  --tag-bg: #e4dac9;
+  --tag-border: #947958;
+  --tag-text: #503d28;
+  --tag-strong: #665036;
+}
+
+:is(.watchlist-tag, .watchlist-tag-filter, .watchlist-tag-choice)[data-tag-tone="dividend"] {
+  --tag-bg: #eed5df;
+  --tag-border: #a86882;
+  --tag-text: #652942;
+  --tag-strong: #843a59;
+}
+
+:is(.watchlist-tag, .watchlist-tag-filter, .watchlist-tag-choice)[data-tag-tone="low-risk"] {
+  --tag-bg: #d8e8df;
+  --tag-border: #70917f;
+  --tag-text: #2b4c3b;
+  --tag-strong: #3e6954;
+}
+
+:is(.watchlist-tag, .watchlist-tag-filter, .watchlist-tag-choice)[data-tag-tone="cash"] {
+  --tag-bg: #e5edcf;
+  --tag-border: #8a9c58;
+  --tag-text: #465522;
+  --tag-strong: #5e702c;
+}
+
+:is(.watchlist-tag, .watchlist-tag-filter, .watchlist-tag-choice)[data-tag-tone="global"] {
+  --tag-bg: #dfd8ee;
+  --tag-border: #8675a9;
+  --tag-text: #49386a;
+  --tag-strong: #604c88;
+}
+
+:is(.watchlist-tag, .watchlist-tag-filter, .watchlist-tag-choice)[data-tag-tone="custom-0"] {
+  --tag-bg: #f0dfcb;
+  --tag-border: #a88058;
+  --tag-text: #5d4025;
+  --tag-strong: #795534;
+}
+
+:is(.watchlist-tag, .watchlist-tag-filter, .watchlist-tag-choice)[data-tag-tone="custom-1"] {
+  --tag-bg: #d8e8e7;
+  --tag-border: #668e8b;
+  --tag-text: #28504d;
+  --tag-strong: #376b67;
+}
+
+:is(.watchlist-tag, .watchlist-tag-filter, .watchlist-tag-choice)[data-tag-tone="custom-2"] {
+  --tag-bg: #e8dce8;
+  --tag-border: #9a7297;
+  --tag-text: #5a3457;
+  --tag-strong: #754971;
+}
+
+:is(.watchlist-tag, .watchlist-tag-filter, .watchlist-tag-choice)[data-tag-tone="custom-3"] {
+  --tag-bg: #e2e3ce;
+  --tag-border: #8a8e59;
+  --tag-text: #4c5026;
+  --tag-strong: #666a36;
+}
+
+.watchlist-tag[data-tag-tone],
+.watchlist-tag-filter[data-tag-tone],
+.watchlist-editor .watchlist-tag-choice[data-tag-tone] {
+  border-color: var(--tag-border);
+  background: var(--tag-bg);
+  color: var(--tag-text);
+}
+
+.watchlist-tag-filter[data-tag-tone] small {
+  color: currentColor;
+  opacity: 0.68;
+}
+
+.watchlist-tag-filter[data-tag-tone]:hover,
+.watchlist-tag-filter[data-tag-tone]:focus-visible,
+.watchlist-tag-filter[data-tag-tone].active,
+.watchlist-editor .watchlist-tag-choice[data-tag-tone]:hover {
+  border-color: var(--tag-strong);
+  background: var(--tag-strong);
+  color: var(--tag-active-text);
+}
+
+.watchlist-editor .watchlist-tag.removable[data-tag-tone] {
+  border-color: var(--tag-border);
+  background: var(--tag-bg);
+  color: var(--tag-text);
+}
+
+.watchlist-editor .watchlist-tag.removable[data-tag-tone]:hover {
+  border-color: var(--red);
+  background: var(--red);
+  color: var(--paper-light);
+}
+
+.watchlist-editor .watchlist-tag-choice[data-tag-tone]:disabled {
+  border-color: var(--tag-border);
+  background: var(--tag-bg);
+  color: var(--tag-text);
+  opacity: 0.46;
+}
+
 .watchlist-editor {
   grid-template-columns: minmax(0, 1fr) minmax(220px, 0.7fr);
   align-items: stretch;
@@ -124,10 +319,16 @@
 }
 
 .watchlist-editor > .watchlist-tag-input-row {
+  grid-column: 1 / -1;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
   gap: 5px;
+  width: min(430px, 100%);
+}
+
+.watchlist-editor > .watchlist-tag-input-row[hidden] {
+  display: none;
 }
 
 .watchlist-tag-input-row > button {
@@ -135,6 +336,7 @@
 }
 
 .watchlist-editor > .watchlist-tag-suggestions {
+  grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
@@ -155,6 +357,19 @@
   background: rgba(21, 25, 22, 0.08);
   color: var(--muted);
   cursor: default;
+}
+
+.watchlist-editor .watchlist-tag-choice.custom {
+  border-color: var(--red);
+  background: transparent;
+  color: var(--red);
+}
+
+.watchlist-editor .watchlist-tag-choice.custom:hover,
+.watchlist-editor .watchlist-tag-choice.custom[aria-expanded="true"] {
+  border-color: var(--red);
+  background: var(--red);
+  color: var(--paper-light);
 }
 
 .watchlist-editor > .watchlist-editor-actions {

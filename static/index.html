@@ -2,18 +2,27 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
     <meta
       name="description"
-      content="输入基金代码或中文名称，查看基金基础资料、净值、阶段业绩与最新持仓。"
+      content="穿透公募基金的净值、费率、业绩基准与季度持仓，建立更清晰的个人基金研究视图。"
     />
-    <title>基金透镜 · Fund Lens</title>
-    <link
-      rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%23f1eddf' stroke='%23151916' stroke-width='3'/%3E%3Ctext x='32' y='38' text-anchor='middle' font-family='serif' font-size='18' font-weight='700' fill='%23151916'%3EFL%3C/text%3E%3C/svg%3E"
-    />
-    <link rel="stylesheet" href="/static/styles.css?v=20260802.16" />
-    <link rel="stylesheet" href="/static/watchlist.css?v=20260803.2" />
+    <meta name="theme-color" content="#151916" />
+    <meta name="application-name" content="基金透镜" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="基金透镜" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <title>基金透镜｜净值、费率与持仓穿透</title>
+    <link rel="manifest" href="/static/site.webmanifest?v=20260803.4" />
+    <link rel="icon" type="image/svg+xml" href="/static/icons/favicon.svg?v=1" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png?v=1" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/apple-touch-icon.png?v=1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260803.22" />
+    <link rel="stylesheet" href="/static/watchlist.css?v=20260803.6" />
   </head>
   <body>
     <div class="paper-noise" aria-hidden="true"></div>
@@ -66,7 +75,7 @@
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 3.8l2.53 5.13 5.67.82-4.1 4 1 5.65L12 16.73 6.9 19.4l.98-5.65-4.1-4 5.68-.82L12 3.8z" />
           </svg>
-          <span>自选组合</span>
+          <span>我的收藏</span>
           <strong id="watchlist-count">0</strong>
         </button>
       </div>
@@ -78,7 +87,7 @@
           <p class="eyebrow">FUND RESEARCH DESK / 基金研究台</p>
           <h1 id="landing-title">穿透一只基金，<br />看清它的风险与收益。</h1>
           <p>
-            查询、历史与自选组合现已集中在顶栏。输入基金代码或中文名称，即可展开净值、费率、
+            查询、历史与收藏现已集中在顶栏。输入基金代码或中文名称，即可展开净值、费率、
             业绩基准和季度持仓的完整研究视图。
           </p>
         </div>
@@ -323,6 +332,29 @@
               </div>
               <div id="fund-manager-list" class="fund-manager-list"></div>
               <p id="fund-manager-note" class="profile-note">—</p>
+              <details class="fund-manager-history-disclosure">
+                <summary>
+                  <span>历史经理与组合变更</span>
+                  <small id="fund-manager-history-summary">—</small>
+                  <b aria-hidden="true">+</b>
+                </summary>
+                <div class="fund-manager-history-grid">
+                  <section class="fund-manager-history-block" aria-labelledby="fund-manager-history-title">
+                    <div class="fund-manager-subheading">
+                      <h3 id="fund-manager-history-title">历史经理</h3>
+                      <span id="fund-manager-history-count">—</span>
+                    </div>
+                    <div id="fund-manager-history-list" class="fund-manager-history-list"></div>
+                  </section>
+                  <section class="fund-manager-change-block" aria-labelledby="fund-manager-change-title">
+                    <div class="fund-manager-subheading">
+                      <h3 id="fund-manager-change-title">经理组合变更</h3>
+                      <span id="fund-manager-change-count">—</span>
+                    </div>
+                    <ol id="fund-manager-change-list" class="fund-manager-change-list"></ol>
+                  </section>
+                </div>
+              </details>
             </article>
 
             <article class="profile-card fund-company-card">
@@ -578,6 +610,25 @@
             aria-label="阶段涨幅"
             hidden
           >
+            <div class="stage-performance-mobile-help" aria-label="风险指标说明">
+              <span>风险指标说明</span>
+              <button
+                class="metric-help-trigger stage-mobile-metric-help"
+                type="button"
+                data-metric-help="夏普比率"
+                aria-label="查看夏普比率说明"
+                aria-haspopup="dialog"
+                aria-controls="metric-help-dialog"
+              >夏普 <b>i</b></button>
+              <button
+                class="metric-help-trigger stage-mobile-metric-help"
+                type="button"
+                data-metric-help="卡玛比率"
+                aria-label="查看卡玛比率说明"
+                aria-haspopup="dialog"
+                aria-controls="metric-help-dialog"
+              >卡玛 <b>i</b></button>
+            </div>
             <div class="stage-performance-scroll">
               <div class="stage-performance-list-heading">
                 <span>阶段</span>
@@ -1093,15 +1144,21 @@
       aria-labelledby="fund-search-title"
     >
       <div class="utility-sheet search-utility-sheet">
-        <button
-          id="fund-search-close"
-          class="utility-close"
-          type="button"
-          aria-label="关闭基金查询"
-        >
-          <span>关闭</span>
-          <b aria-hidden="true">×</b>
-        </button>
+        <div class="utility-dialog-actions">
+          <a class="utility-page-link" href="/search">
+            <span>独立页面打开</span>
+            <b aria-hidden="true">↗</b>
+          </a>
+          <button
+            id="fund-search-close"
+            class="utility-close"
+            type="button"
+            aria-label="关闭基金查询"
+          >
+            <span>关闭</span>
+            <b aria-hidden="true">×</b>
+          </button>
+        </div>
         <header class="utility-heading search-utility-heading">
           <p class="eyebrow">FUND LOOKUP / 基金查询</p>
           <h2 id="fund-search-title">从代码开始研究</h2>
@@ -1146,7 +1203,7 @@
         </form>
         <footer class="utility-footnote">
           <span>TIP 01</span>
-          <p>查询完成后会自动加入“查询历史”；需要长期跟踪的基金可再加入自选组合。</p>
+          <p>查询完成后会自动加入“查询历史”；需要长期跟踪的基金可加入收藏。</p>
         </footer>
       </div>
     </dialog>
@@ -1195,29 +1252,31 @@
       aria-labelledby="watchlist-title"
     >
       <div class="watchlist-sheet">
-        <button
-          id="watchlist-close"
-          class="watchlist-close"
-          type="button"
-          aria-label="关闭自选组合"
-        >
-          <span>关闭</span>
-          <b aria-hidden="true">×</b>
-        </button>
+        <div class="watchlist-dialog-actions">
+          <a class="watchlist-page-link" href="/watchlist">
+            <span>独立页面打开</span>
+            <b aria-hidden="true">↗</b>
+          </a>
+          <button
+            id="watchlist-close"
+            class="watchlist-close"
+            type="button"
+            aria-label="关闭我的收藏"
+          >
+            <span>关闭</span>
+            <b aria-hidden="true">×</b>
+          </button>
+        </div>
 
         <header class="watchlist-heading">
-          <p class="eyebrow">LOCAL PORTFOLIO / 本地自选</p>
+          <p class="eyebrow">SAVED FUNDS / 本地收藏</p>
           <div class="watchlist-title-line">
-            <h2 id="watchlist-title">我的自选组合</h2>
+            <h2 id="watchlist-title">我的收藏</h2>
             <span id="watchlist-total">0 FUNDS</span>
           </div>
-          <p>
-            把值得持续观察的基金收进同一份研究清单。基金名称保持官方名称，每只基金可拥有多个标签，数据只写入本机
-            <code>.data/watchlist.json</code>。
-          </p>
         </header>
 
-        <section class="watchlist-toolbar" aria-label="按标签筛选自选基金">
+        <section class="watchlist-toolbar" aria-label="按标签筛选收藏基金">
           <div class="watchlist-filter-shell">
             <strong>TAG FILTER</strong>
             <div
@@ -1870,6 +1929,6 @@
       <span>PUBLIC DATA · CLEAR VIEW</span>
     </footer>
 
-    <script src="/static/app.js?v=20260803.2" defer></script>
+    <script src="/static/app.js?v=20260803.11" defer></script>
   </body>
 </html>

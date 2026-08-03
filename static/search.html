@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="description" content="通过基金代码、名称或拼音查询基金。" />
+    <meta name="theme-color" content="#151916" />
+    <meta name="application-name" content="基金透镜" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="查询基金" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <title>查询基金｜基金透镜</title>
+    <link rel="manifest" href="/static/search.webmanifest?v=20260803.1" />
+    <link rel="icon" type="image/svg+xml" href="/static/icons/favicon.svg?v=1" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png?v=1" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/apple-touch-icon.png?v=1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260803.22" />
+    <link rel="stylesheet" href="/static/search-page.css?v=20260803.2" />
+  </head>
+  <body class="search-page-body">
+    <div class="paper-noise" aria-hidden="true"></div>
+
+    <header class="site-header search-page-header">
+      <a class="brand" href="/" aria-label="返回基金透镜研究台">
+        <span class="brand-mark">FL</span>
+        <span>
+          <strong>基金透镜</strong>
+          <small>FUND LOOKUP / CN</small>
+        </span>
+      </a>
+      <nav class="header-actions" aria-label="查询页面导航">
+        <a class="header-tool-trigger search-page-nav" href="/watchlist">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3.8l2.53 5.13 5.67.82-4.1 4 1 5.65L12 16.73 6.9 19.4l.98-5.65-4.1-4 5.68-.82L12 3.8z" />
+          </svg>
+          <span>我的收藏</span>
+          <b aria-hidden="true">↗</b>
+        </a>
+      </nav>
+    </header>
+
+    <main class="search-page-main">
+      <section class="search-page-hero" aria-labelledby="search-page-title">
+        <p class="eyebrow">FUND LOOKUP / 本地基金目录</p>
+        <h1 id="search-page-title">查询基金</h1>
+        <form id="search-page-form" class="search-page-form" novalidate>
+          <label for="search-page-input">基金代码或名称</label>
+          <div class="search-page-input-row">
+            <input
+              id="search-page-input"
+              name="query"
+              type="search"
+              autocomplete="off"
+              maxlength="80"
+              placeholder="000001 / 华夏成长"
+              aria-autocomplete="list"
+              aria-controls="search-page-result-list"
+              aria-expanded="false"
+            />
+            <button type="submit">
+              <span>查询</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 12h13M13 6l6 6-6 6" />
+              </svg>
+            </button>
+          </div>
+          <p id="search-page-feedback" aria-live="polite"></p>
+        </form>
+      </section>
+
+      <section id="search-page-results" class="search-page-results" hidden>
+        <header>
+          <strong>MATCHED FUNDS</strong>
+          <span id="search-page-count"></span>
+        </header>
+        <div
+          id="search-page-result-list"
+          role="listbox"
+          aria-label="基金搜索结果"
+        ></div>
+      </section>
+
+      <section id="search-page-history" class="search-page-history" hidden>
+        <header>
+          <div>
+            <strong>查询历史</strong>
+            <span id="search-page-history-count"></span>
+          </div>
+          <button id="search-page-history-clear" type="button">清空</button>
+        </header>
+        <div id="search-page-history-list" class="search-page-history-list"></div>
+      </section>
+    </main>
+
+    <footer class="site-footer search-page-footer">
+      <span>FUND LENS / 查询基金</span>
+      <a href="/">返回基金研究台</a>
+    </footer>
+
+    <script src="/static/search-page.js?v=20260803.2" defer></script>
+  </body>
+</html>

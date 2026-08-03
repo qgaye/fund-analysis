@@ -10,7 +10,7 @@ import math
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
@@ -209,6 +209,138 @@ def _parse_fund_manager_index(page_html: str) -> list[dict[str, Any]]:
     return managers
 
 
+def _parse_fund_manager_history(page_html: str) -> dict[str, Any]:
+    """解析单基金的历任经理及经理组合变更时间线。"""
+    soup = BeautifulSoup(page_html, features="html.parser")
+    history_table = None
+    for table in soup.find_all("table"):
+        headers = [
+            cell.get_text(" ", strip=True)
+            for cell in table.select("thead th")
+        ]
+        if headers[:5] == [
+            "起始期",
+            "截止期",
+            "基金经理",
+            "任职期间",
+            "任职回报",
+        ]:
+            history_table = table
+            break
+
+    if history_table is None:
+        return {"历史经理": [], "组合变更": []}
+
+    changes: list[dict[str, Any]] = []
+    manager_segments: dict[str, dict[str, Any]] = {}
+    active_manager_keys: set[str] = set()
+
+    for row in history_table.select("tbody tr"):
+        cells = row.find_all("td", recursive=False)
+        if len(cells) < 5:
+            continue
+        start_date = cells[0].get_text(" ", strip=True) or None
+        end_date = cells[1].get_text(" ", strip=True) or None
+        managers: list[dict[str, Any]] = []
+        for link in cells[2].find_all("a", href=True):
+            name = link.get_text(" ", strip=True)
+            manager_match = re.search(r"/manager/(\d+)\.html", link["href"])
+            manager_id = manager_match.group(1) if manager_match else None
+            if not name:
+                continue
+            manager = {
+                "经理ID": manager_id,
+                "姓名": name,
+                "详情链接": (
+                    f"https://fund.eastmoney.com/manager/{manager_id}.html"
+                    if manager_id
+                    else _absolute_eastmoney_url(link["href"])
+                ),
+            }
+            managers.append(manager)
+
+        if not managers:
+            names = re.split(
+                r"[、,，\s]+", cells[2].get_text(" ", strip=True)
+            )
+            managers = [
+                {"经理ID": None, "姓名": name, "详情链接": None}
+                for name in names
+                if name
+            ]
+        if not start_date or not managers:
+            continue
+
+        is_current = end_date == "至今"
+        changes.append(
+            {
+                "起始日期": start_date,
+                "截止日期": end_date,
+                "经理": managers,
+                "任职期间": cells[3].get_text(" ", strip=True) or None,
+                "区间回报": cells[4].get_text(" ", strip=True) or None,
+                "当前组合": is_current,
+            }
+        )
+
+        for manager in managers:
+            manager_key = manager["经理ID"] or f"name:{manager['姓名']}"
+            entry = manager_segments.setdefault(
+                manager_key,
+                {**manager, "任职区间": []},
+            )
+            entry["任职区间"].append(
+                {"起始日期": start_date, "截止日期": end_date}
+            )
+            if is_current:
+                active_manager_keys.add(manager_key)
+
+    historical_managers: list[dict[str, Any]] = []
+    for manager_key, manager in manager_segments.items():
+        if manager_key in active_manager_keys:
+            continue
+        periods = manager.pop("任职区间")
+        periods.sort(key=lambda item: item["起始日期"])
+        merged_periods: list[dict[str, Any]] = []
+        for period in periods:
+            if not merged_periods:
+                merged_periods.append(period.copy())
+                continue
+            previous = merged_periods[-1]
+            try:
+                previous_end = date.fromisoformat(previous["截止日期"])
+                current_start = date.fromisoformat(period["起始日期"])
+            except (TypeError, ValueError):
+                previous_end = None
+                current_start = None
+            if (
+                previous_end is not None
+                and current_start is not None
+                and current_start <= previous_end + timedelta(days=1)
+            ):
+                previous["截止日期"] = period["截止日期"]
+            else:
+                merged_periods.append(period.copy())
+
+        historical_managers.append(
+            {
+                **manager,
+                "任职区间": merged_periods,
+                "首次上任": merged_periods[0]["起始日期"],
+                "最后离任": merged_periods[-1]["截止日期"],
+                "任职次数": len(merged_periods),
+            }
+        )
+
+    historical_managers.sort(
+        key=lambda item: str(item.get("最后离任") or ""), reverse=True
+    )
+    return {
+        "历史经理": historical_managers,
+        "组合变更": changes,
+    }
+
+
 def _parse_manager_profile(
     page_html: str, fund_code: str
 ) -> dict[str, Any]:
@@ -290,13 +422,13 @@ def _load_fund_managers(
         response.raise_for_status()
         response.encoding = response.apparent_encoding or "utf-8"
         managers = _parse_fund_manager_index(response.text)
+        manager_history = _parse_fund_manager_history(response.text)
     except Exception as exc:
         warnings.append(f"基金经理获取失败：{exc}")
         return {}
 
     if not managers:
         warnings.append("基金经理获取失败：未找到现任基金经理。")
-        return {}
 
     def enrich(manager: dict[str, Any]) -> dict[str, Any]:
         manager_id = manager["经理ID"]
@@ -318,13 +450,18 @@ def _load_fund_managers(
             )
             return manager
 
-    with ThreadPoolExecutor(max_workers=min(4, len(managers))) as executor:
-        current = list(executor.map(enrich, managers))
+    if managers:
+        with ThreadPoolExecutor(max_workers=min(4, len(managers))) as executor:
+            current = list(executor.map(enrich, managers))
+    else:
+        current = []
     return {
         "数量": len(current),
         "现任": current,
+        **manager_history,
         "从业口径": "天天基金经理档案的累计任职时间",
         "任期口径": "现任经理在本基金的起始日、任职天数和任职回报",
+        "组合变更口径": "每段回报为该经理组合任职期间的基金区间回报，不是经理排名",
     }
 
 

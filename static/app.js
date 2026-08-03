@@ -24,6 +24,7 @@ let currentCustomRange = { start: "", end: "" };
 let currentInvestmentMode = "single";
 let currentDividends = [];
 let navPlotPoints = [];
+let navChartDimensions = { width: 1000, height: 360 };
 let currentPeriodicUnit = "year";
 let currentPerformance = {};
 let currentTrackBenchmark = null;
@@ -758,11 +759,12 @@ function renderPerformance(performance) {
     { label: "成立以来", key: "成立以来" },
   ];
   chart.replaceChildren();
+  const benchmarkHeading = currentTrackBenchmark?.简称
+    ? `${currentTrackBenchmark.简称}涨幅`
+    : "赛道涨幅";
   text(
     "#stage-benchmark-heading",
-    currentTrackBenchmark?.简称
-      ? `${currentTrackBenchmark.简称}涨幅`
-      : "赛道涨幅",
+    benchmarkHeading,
   );
 
   periods.forEach(({ label: period, key }, index) => {
@@ -784,14 +786,17 @@ function renderPerformance(performance) {
     item.style.animationDelay = `${index * 55}ms`;
 
     const label = document.createElement("span");
+    label.className = "stage-period";
     label.textContent = period;
 
     const value = document.createElement("strong");
+    value.dataset.label = "基金涨幅";
     value.textContent = valid ? formatPercent(numeric) : "—";
     value.className = valid ? movementClass(numeric) : "";
 
     const benchmarkReturn = benchmarkStageReturn(key);
     const benchmarkValue = document.createElement("strong");
+    benchmarkValue.dataset.label = benchmarkHeading;
     benchmarkValue.className = `benchmark-value ${
       Number.isFinite(benchmarkReturn)
         ? movementClass(benchmarkReturn)
@@ -806,6 +811,7 @@ function renderPerformance(performance) {
       ? numeric - benchmarkReturn
       : null;
     const relativeValue = document.createElement("strong");
+    relativeValue.dataset.label = "相对赛道";
     relativeValue.className = `relative-value ${
       Number.isFinite(relativeReturn) ? movementClass(relativeReturn) : ""
     }`;
@@ -825,6 +831,8 @@ function renderPerformance(performance) {
       riskMetrics.calmar,
       isAnnualRiskPeriod,
     );
+    sharpeValue.dataset.label = "夏普比率";
+    calmarValue.dataset.label = "卡玛比率";
 
     item.append(
       label,
@@ -1446,9 +1454,9 @@ function positionDrawdownLabels() {
   const edgePadding = 8;
   Array.from(layer.children).forEach((label) => {
     const pointX = chartLeft +
-      (Number(label.dataset.chartX) / 1000) * svgBounds.width;
+      (Number(label.dataset.chartX) / navChartDimensions.width) * svgBounds.width;
     const pointY = chartTop +
-      (Number(label.dataset.chartY) / 360) * svgBounds.height;
+      (Number(label.dataset.chartY) / navChartDimensions.height) * svgBounds.height;
     const labelWidth = label.offsetWidth;
     const labelHeight = label.offsetHeight;
     const left = Math.min(
@@ -1519,9 +1527,15 @@ function formatNavValue(value, metric = currentNavMetric, axis = false) {
   return formatNumber(value, 4);
 }
 
-function buildYAxisTicks(minValue, maxValue, includeZero = false) {
-  const ticks = Array.from({ length: 5 }, (_, index) => {
-    const ratio = index / 4;
+function buildYAxisTicks(
+  minValue,
+  maxValue,
+  includeZero = false,
+  tickCount = 5,
+) {
+  const intervals = Math.max(tickCount - 1, 1);
+  const ticks = Array.from({ length: tickCount }, (_, index) => {
+    const ratio = index / intervals;
     return maxValue - ratio * (maxValue - minValue);
   });
   if (includeZero) ticks.push(0);
@@ -1960,9 +1974,17 @@ function renderNavChart(
 
   noData.hidden = true;
   if (range === "custom") showCustomRangeError();
-  const width = 1000;
-  const height = 360;
-  const margin = { top: 24, right: 22, bottom: 46, left: 68 };
+  const isMobileChart = window.matchMedia("(max-width: 700px)").matches;
+  const width = isMobileChart ? 360 : 1000;
+  const height = isMobileChart ? 320 : 360;
+  const margin = isMobileChart
+    ? { top: 22, right: 12, bottom: 50, left: 58 }
+    : { top: 24, right: 22, bottom: 46, left: 68 };
+  const xTickCount = isMobileChart ? 3 : 5;
+  const yTickCount = isMobileChart ? 3 : 5;
+  navChartDimensions = { width, height };
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.classList.toggle("mobile-chart", isMobileChart);
   const plotWidth = width - margin.left - margin.right;
   const plotHeight = height - margin.top - margin.bottom;
   const startTime = new Date(`${rows[0].日期}T00:00:00`).getTime();
@@ -2079,6 +2101,7 @@ function renderNavChart(
     minValue,
     maxValue,
     isPercentageChart,
+    yTickCount,
   );
   yAxisTicks.forEach((labelValue) => {
     const y = yFor(labelValue);
@@ -2103,8 +2126,8 @@ function renderNavChart(
       : formatNavValue(labelValue, metric, true);
     grid.append(label);
   });
-  for (let index = 0; index < 5; index += 1) {
-    const ratio = index / 4;
+  for (let index = 0; index < xTickCount; index += 1) {
+    const ratio = index / Math.max(xTickCount - 1, 1);
     const time = startTime + ratio * (endTime - startTime);
     const x = margin.left + ratio * plotWidth;
     grid.append(
@@ -2118,7 +2141,8 @@ function renderNavChart(
     const label = svgNode("text", {
       x,
       y: height - 16,
-      "text-anchor": index === 0 ? "start" : index === 4 ? "end" : "middle",
+      "text-anchor":
+        index === 0 ? "start" : index === xTickCount - 1 ? "end" : "middle",
     });
     label.textContent = formatChartDate(
       localIsoDate(new Date(time)),
@@ -4303,6 +4327,8 @@ function renderFundProfile(basic) {
 function renderFundPeople(basic) {
   const managerData = basic.基金经理 ?? {};
   const managers = managerData.现任 ?? [];
+  const historicalManagers = managerData.历史经理 ?? [];
+  const managerChanges = managerData.组合变更 ?? [];
   const managerList = document.querySelector("#fund-manager-list");
   managerList.replaceChildren();
   text(
@@ -4371,6 +4397,108 @@ function renderFundPeople(basic) {
       : null,
     "经理从业与任期数据来自天天基金经理档案。",
   );
+
+  const historyList = document.querySelector("#fund-manager-history-list");
+  historyList.replaceChildren();
+  text(
+    "#fund-manager-history-count",
+    historicalManagers.length ? `${historicalManagers.length} 位` : null,
+    "无已离任经理",
+  );
+  if (!historicalManagers.length) {
+    const empty = document.createElement("p");
+    empty.className = "fund-manager-history-empty";
+    empty.textContent = "公开记录中暂无已离任经理。";
+    historyList.append(empty);
+  }
+  historicalManagers.forEach((manager) => {
+    const item = document.createElement("article");
+    item.className = "fund-manager-history-person";
+    const heading = document.createElement("div");
+    const name = document.createElement(manager.详情链接 ? "a" : "strong");
+    name.textContent = manager.姓名 ?? "姓名暂无";
+    if (manager.详情链接) {
+      name.href = manager.详情链接;
+      name.target = "_blank";
+      name.rel = "noreferrer";
+    }
+    const count = document.createElement("span");
+    count.textContent = `${manager.任职次数 ?? manager.任职区间?.length ?? 1} 段任职`;
+    heading.append(name, count);
+
+    const periods = document.createElement("div");
+    periods.className = "fund-manager-history-periods";
+    (manager.任职区间 ?? []).forEach((period) => {
+      const row = document.createElement("p");
+      row.textContent = `${period.起始日期 ?? "—"} — ${period.截止日期 ?? "—"}`;
+      periods.append(row);
+    });
+    item.append(heading, periods);
+    historyList.append(item);
+  });
+
+  const changeList = document.querySelector("#fund-manager-change-list");
+  changeList.replaceChildren();
+  text(
+    "#fund-manager-history-summary",
+    historicalManagers.length || managerChanges.length
+      ? `${historicalManagers.length} 位历史经理 · ${managerChanges.length} 个组合区间`
+      : null,
+    "暂无历史记录",
+  );
+  text(
+    "#fund-manager-change-count",
+    managerChanges.length ? `${managerChanges.length} 个区间` : null,
+    "暂无记录",
+  );
+  if (!managerChanges.length) {
+    const empty = document.createElement("li");
+    empty.className = "fund-manager-change-empty";
+    empty.textContent = "暂未取得经理组合变更记录。";
+    changeList.append(empty);
+  }
+  managerChanges.forEach((change) => {
+    const item = document.createElement("li");
+    item.className = `fund-manager-change${change.当前组合 ? " is-current" : ""}`;
+
+    const marker = document.createElement("span");
+    marker.className = "fund-manager-change-marker";
+    marker.setAttribute("aria-hidden", "true");
+
+    const content = document.createElement("div");
+    const meta = document.createElement("div");
+    meta.className = "fund-manager-change-meta";
+    const period = document.createElement("span");
+    period.textContent = `${change.起始日期 ?? "—"} — ${change.截止日期 ?? "—"}`;
+    const duration = document.createElement("small");
+    duration.textContent = change.任职期间 ?? "任职时长暂无";
+    meta.append(period, duration);
+
+    const names = document.createElement("div");
+    names.className = "fund-manager-change-names";
+    (change.经理 ?? []).forEach((manager, index) => {
+      if (index) names.append(document.createTextNode(" · "));
+      const name = document.createElement(manager.详情链接 ? "a" : "strong");
+      name.textContent = manager.姓名 ?? "姓名暂无";
+      if (manager.详情链接) {
+        name.href = manager.详情链接;
+        name.target = "_blank";
+        name.rel = "noreferrer";
+      }
+      names.append(name);
+    });
+
+    const returnValue = document.createElement("span");
+    returnValue.className = "fund-manager-change-return";
+    returnValue.textContent = `区间回报 ${change.区间回报 ?? "—"}`;
+    const numericReturn = Number.parseFloat(change.区间回报);
+    if (Number.isFinite(numericReturn)) {
+      returnValue.classList.add(numericReturn < 0 ? "is-negative" : "is-positive");
+    }
+    content.append(meta, names, returnValue);
+    item.append(marker, content);
+    changeList.append(item);
+  });
 
   const company = basic.基金公司 ?? {};
   text("#fund-company-name", company.名称 ?? basic.管理人);
@@ -4835,7 +4963,18 @@ searchHistoryClearEl.addEventListener("click", () => {
 
 renderSearchHistory();
 
+function prefersDedicatedUtilityPage() {
+  return (
+    window.navigator.standalone === true ||
+    window.matchMedia("(max-width: 820px), (pointer: coarse)").matches
+  );
+}
+
 document.querySelector("#fund-search-open")?.addEventListener("click", () => {
+  if (prefersDedicatedUtilityPage()) {
+    window.location.assign("/search");
+    return;
+  }
   if (!fundSearchDialog.open) fundSearchDialog.showModal();
   requestAnimationFrame(() => {
     codeInput.focus();
@@ -4881,6 +5020,36 @@ const watchlistTotalEl = document.querySelector("#watchlist-total");
 let watchlistData = { 基金: [], 总数: 0, 标签建议: [] };
 let watchlistActiveTag = "全部";
 
+const WATCHLIST_TAG_TONES = new Map([
+  ["全部", "all"],
+  ["持有中", "holding"],
+  ["债基", "bond"],
+  ["固收+", "bond"],
+  ["偏股", "equity"],
+  ["股票", "equity"],
+  ["指数", "index"],
+  ["成长", "growth"],
+  ["价值", "value"],
+  ["红利", "dividend"],
+  ["低波", "low-risk"],
+  ["货币", "cash"],
+  ["QDII", "global"],
+  ["FOF", "global"],
+]);
+
+function watchlistTagTone(tag) {
+  const value = String(tag || "");
+  const knownTone = WATCHLIST_TAG_TONES.get(value);
+  if (knownTone) return knownTone;
+  let hash = 0;
+  for (const character of value) hash = (hash * 31 + character.codePointAt(0)) >>> 0;
+  return `custom-${hash % 4}`;
+}
+
+function applyWatchlistTagTone(element, tag) {
+  element.dataset.tagTone = watchlistTagTone(tag);
+}
+
 function inferWatchlistTypeTag(fundType) {
   const value = String(fundType || "");
   if (/货币/.test(value)) return "货币";
@@ -4907,7 +5076,7 @@ function syncFavoriteButton() {
   favoriteButton.classList.toggle("is-favorite", saved);
   favoriteButton.setAttribute("aria-pressed", String(saved));
   favoriteButton.querySelector("span").textContent = saved ? "已收藏" : "收藏基金";
-  favoriteButton.title = saved ? "从自选组合移除" : "加入自选组合";
+  favoriteButton.title = saved ? "从收藏移除" : "加入收藏";
 }
 
 function applyWatchlistPayload(payload) {
@@ -4937,7 +5106,7 @@ async function loadWatchlist({ quiet = false } = {}) {
     applyWatchlistPayload(payload);
     if (!quiet) setWatchlistFeedback("已与本地文件同步");
   } catch (error) {
-    setWatchlistFeedback(error.message || "自选组合读取失败", true);
+    setWatchlistFeedback(error.message || "收藏读取失败", true);
   }
 }
 
@@ -4976,6 +5145,7 @@ function renderWatchlistTagFilters(items) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "watchlist-tag-filter";
+    applyWatchlistTagTone(button, tag);
     button.classList.toggle("active", tag === watchlistActiveTag);
     button.setAttribute("aria-pressed", String(tag === watchlistActiveTag));
 
@@ -4997,6 +5167,7 @@ function createWatchlistEditor(item, card) {
   form.className = "watchlist-editor";
   form.hidden = true;
   let selectedTags = [...new Set((item.tags || []).filter(Boolean))].slice(0, 12);
+  let customTagMode = false;
 
   const heading = document.createElement("div");
   heading.className = "watchlist-editor-heading";
@@ -5011,6 +5182,7 @@ function createWatchlistEditor(item, card) {
 
   const inputRow = document.createElement("div");
   inputRow.className = "watchlist-tag-input-row";
+  inputRow.hidden = true;
   const tagField = document.createElement("label");
   tagField.textContent = "添加自定义标签";
   const tagInput = document.createElement("input");
@@ -5035,7 +5207,7 @@ function createWatchlistEditor(item, card) {
   save.type = "submit";
   save.textContent = "保存标签";
   actions.append(cancel, save);
-  form.append(heading, selected, inputRow, suggestions, actions);
+  form.append(heading, selected, suggestions, inputRow, actions);
 
   const hasTag = (tag) =>
     selectedTags.some((current) => current.toLocaleLowerCase() === tag.toLocaleLowerCase());
@@ -5052,6 +5224,7 @@ function createWatchlistEditor(item, card) {
         const chip = document.createElement("button");
         chip.type = "button";
         chip.className = "watchlist-tag removable";
+        applyWatchlistTagTone(chip, tag);
         chip.setAttribute("aria-label", `移除标签 ${tag}`);
         chip.textContent = `${tag} ×`;
         chip.addEventListener("click", () => {
@@ -5064,12 +5237,13 @@ function createWatchlistEditor(item, card) {
 
     suggestions.replaceChildren();
     const label = document.createElement("span");
-    label.textContent = "快捷标签";
+    label.textContent = "从已有标签选择";
     suggestions.append(label);
     (watchlistData.标签建议 || []).forEach((tag) => {
       const choice = document.createElement("button");
       choice.type = "button";
       choice.className = "watchlist-tag-choice";
+      applyWatchlistTagTone(choice, tag);
       choice.textContent = tag;
       choice.disabled = hasTag(tag) || selectedTags.length >= 12;
       choice.addEventListener("click", () => {
@@ -5078,6 +5252,20 @@ function createWatchlistEditor(item, card) {
       });
       suggestions.append(choice);
     });
+
+    const custom = document.createElement("button");
+    custom.type = "button";
+    custom.className = "watchlist-tag-choice custom";
+    custom.textContent = customTagMode ? "收起自定义" : "+ 自定义";
+    custom.disabled = selectedTags.length >= 12;
+    custom.setAttribute("aria-expanded", String(customTagMode));
+    custom.addEventListener("click", () => {
+      customTagMode = !customTagMode;
+      renderTagEditor();
+      if (customTagMode) tagInput.focus();
+    });
+    suggestions.append(custom);
+    inputRow.hidden = !customTagMode || selectedTags.length >= 12;
   }
 
   function addCustomTag() {
@@ -5085,8 +5273,8 @@ function createWatchlistEditor(item, card) {
     if (!tag || selectedTags.length >= 12 || hasTag(tag)) return;
     selectedTags.push(tag);
     tagInput.value = "";
+    customTagMode = false;
     renderTagEditor();
-    tagInput.focus();
   }
 
   addButton.addEventListener("click", addCustomTag);
@@ -5146,6 +5334,7 @@ function createWatchlistCard(item, index) {
   (item.tags || []).forEach((tag) => {
     const chip = document.createElement("span");
     chip.className = "watchlist-tag";
+    applyWatchlistTagTone(chip, tag);
     chip.textContent = tag;
     tags.append(chip);
   });
@@ -5210,6 +5399,10 @@ function renderWatchlist() {
 }
 
 document.querySelector("#watchlist-open")?.addEventListener("click", () => {
+  if (prefersDedicatedUtilityPage()) {
+    window.location.assign("/watchlist");
+    return;
+  }
   if (!watchlistDialog.open) watchlistDialog.showModal();
   loadWatchlist();
 });
@@ -5231,7 +5424,7 @@ favoriteButton?.addEventListener("click", async () => {
       ? await removeWatchlistItem(currentFundSnapshot.code)
       : await saveWatchlistItem({
           ...currentFundSnapshot,
-          tags: [inferWatchlistTypeTag(currentFundSnapshot.fund_type)],
+          tags: [inferWatchlistTypeTag(currentFundSnapshot.fund_type), "持有中"],
         });
     applyWatchlistPayload(payload);
   } catch (error) {
@@ -5453,6 +5646,17 @@ document.querySelectorAll("[data-simulator-mode]").forEach((button) => {
 const navChart = document.querySelector("#nav-history-chart");
 const navTooltip = document.querySelector("#nav-chart-tooltip");
 const navChartShell = document.querySelector("#nav-chart-shell");
+const navChartMobileQuery = window.matchMedia("(max-width: 700px)");
+const handleNavChartBreakpointChange = () => {
+  if (Object.keys(currentNavHistory).length) {
+    renderNavChart(currentNavRange, currentNavMetric);
+  }
+};
+if (typeof navChartMobileQuery.addEventListener === "function") {
+  navChartMobileQuery.addEventListener("change", handleNavChartBreakpointChange);
+} else {
+  navChartMobileQuery.addListener(handleNavChartBreakpointChange);
+}
 if ("ResizeObserver" in window) {
   new ResizeObserver(() => positionDrawdownLabels()).observe(navChartShell);
 } else {
@@ -5461,7 +5665,8 @@ if ("ResizeObserver" in window) {
 navChart.addEventListener("pointermove", (event) => {
   if (!navPlotPoints.length) return;
   const bounds = navChart.getBoundingClientRect();
-  const chartX = ((event.clientX - bounds.left) / bounds.width) * 1000;
+  const chartX =
+    ((event.clientX - bounds.left) / bounds.width) * navChartDimensions.width;
   const nearest = navPlotPoints.reduce((best, point) =>
     Math.abs(point.x - chartX) < Math.abs(best.x - chartX) ? point : best,
   );
@@ -5508,9 +5713,16 @@ navChart.addEventListener("pointermove", (event) => {
           nearest.value,
           currentNavMetric,
         )}`;
-  navTooltip.style.left = `${(nearest.x / 1000) * bounds.width}px`;
-  navTooltip.style.top = `${(nearest.y / 360) * bounds.height}px`;
-  navTooltip.classList.toggle("align-right", nearest.x > 820);
+  navTooltip.style.left = `${
+    (nearest.x / navChartDimensions.width) * bounds.width
+  }px`;
+  navTooltip.style.top = `${
+    (nearest.y / navChartDimensions.height) * bounds.height
+  }px`;
+  navTooltip.classList.toggle(
+    "align-right",
+    nearest.x > navChartDimensions.width * 0.82,
+  );
   navTooltip.hidden = false;
 });
 
