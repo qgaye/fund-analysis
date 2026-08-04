@@ -191,59 +191,44 @@
 
           <div class="fund-profile-grid">
             <article class="profile-card scale-card">
-              <div class="profile-card-heading">
-                <span class="section-label">LIFECYCLE &amp; SCALE</span>
-                <span id="fund-scale-date">—</span>
-              </div>
-              <div class="profile-lead">
-                <span>最新净资产</span>
-                <strong id="fund-scale">—</strong>
+              <div id="scale-trend-block" class="scale-trend-block" hidden>
+                <div class="profile-card-heading">
+                  <span class="section-label">SCALE TREND · 半年度净资产</span>
+                  <span class="scale-trend-legend">
+                    <span class="scale-legend-inst"><i></i>机构</span>
+                    <span class="scale-legend-indiv"><i></i>个人</span>
+                  </span>
+                </div>
+                <div id="scale-trend-scroll" class="scale-trend-scroll">
+                  <div
+                    id="scale-trend-chart"
+                    class="scale-trend-chart"
+                    role="img"
+                    aria-label="基金历年半年度净资产规模与机构、个人持有比例趋势"
+                  ></div>
+                </div>
+                <p class="profile-note">
+                  柱高为净资产（亿元），按半年报/年报口径；柱内配色为当期机构与个人持有比例。默认展示最近 4 期，向左拖动查看更早期数。
+                </p>
               </div>
               <dl class="profile-facts">
-                <div>
-                  <dt>成立日期</dt>
-                  <dd id="founded-date">—</dd>
-                </div>
                 <div>
                   <dt>成立时间</dt>
                   <dd id="fund-age">—</dd>
                 </div>
                 <div>
-                  <dt>最新份额</dt>
-                  <dd id="fund-shares">—</dd>
+                  <dt>当前净资产</dt>
+                  <dd id="fund-scale">—</dd>
                 </div>
                 <div>
-                  <dt>成立份额</dt>
-                  <dd id="founded-scale">—</dd>
+                  <dt>机构占比</dt>
+                  <dd id="institution-share">—</dd>
+                </div>
+                <div>
+                  <dt>个人占比</dt>
+                  <dd id="individual-share">—</dd>
                 </div>
               </dl>
-
-              <div class="holder-block">
-                <div class="profile-card-heading">
-                  <span class="section-label">HOLDER STRUCTURE</span>
-                  <span id="holder-period">—</span>
-                </div>
-                <div
-                  id="holder-bar"
-                  class="holder-bar"
-                  role="img"
-                  aria-label="基金个人和机构持有比例"
-                >
-                  <i id="institution-bar"></i>
-                  <i id="individual-bar"></i>
-                </div>
-                <div class="holder-values">
-                  <div>
-                    <span><i></i>机构持有</span>
-                    <strong id="institution-share">—</strong>
-                  </div>
-                  <div>
-                    <span><i></i>个人持有</span>
-                    <strong id="individual-share">—</strong>
-                  </div>
-                </div>
-                <p id="holder-note" class="profile-note">—</p>
-              </div>
             </article>
 
             <article class="profile-card fee-card">
@@ -414,6 +399,9 @@
                 </button>
                 <button type="button" data-nav-metric="累计净值" role="tab">
                   累计净值
+                </button>
+                <button type="button" data-nav-metric="持有人收益" role="tab">
+                  持有人收益
                 </button>
                 <button type="button" data-nav-metric="分红记录" role="tab">
                   分红记录
@@ -694,6 +682,27 @@
               暂无足够的净值数据用于绘制牛熊周期走势。
             </div>
             <p class="bull-bear-caption">上扬曲线为牛市阶段，下降曲线为熊市阶段。</p>
+          </div>
+          <div
+            id="investor-return-panel"
+            class="investor-return-panel"
+            aria-label="持有人收益率"
+            hidden
+          >
+            <p id="investor-return-status" class="investor-return-status" role="status">
+              正在计算持有人收益率（首次需下载历年季报，请稍候）…
+            </p>
+            <div class="investor-return-scroll" hidden id="investor-return-body">
+              <div class="investor-return-list-heading">
+                <span>区间</span>
+                <span>持有人收益率</span>
+                <span>基金净值收益率</span>
+                <span>收益差距</span>
+                <span>净申赎</span>
+              </div>
+              <div id="investor-return-list" class="investor-return-list"></div>
+            </div>
+            <p id="investor-return-window-note" class="investor-return-window-note"></p>
           </div>
           <p id="nav-chart-note" class="nav-chart-note">
             所选区间首日归零，不代表投资者从基金成立日起持有。

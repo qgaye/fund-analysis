@@ -33,12 +33,15 @@ class FundFileCache:
         refresh_minute: int = 30,
         stale_retry_minutes: int = 30,
         holdings_ttl_seconds: int = 10 * 60,
+        investor_return_ttl_seconds: int = 24 * 60 * 60,
     ) -> None:
         self.directory = directory
         self.refresh_hour = refresh_hour
         self.refresh_minute = refresh_minute
         self.stale_retry_minutes = stale_retry_minutes
         self.holdings_ttl_seconds = holdings_ttl_seconds
+        # 持有人收益率依赖季报，仅每季度更新一次，用较长 TTL 减少重复下载 PDF。
+        self.investor_return_ttl_seconds = investor_return_ttl_seconds
         # 保护同一文件的读改写：基金主体与季度持仓分区可能来自不同请求线程。
         self._file_locks: dict[str, threading.Lock] = {}
         self._file_locks_guard = threading.Lock()
@@ -164,6 +167,64 @@ class FundFileCache:
                 "value": value,
             }
             record["holdings_periods"] = periods
+            self._write_record(fund_code, record)
+
+    def read_investor_return(
+        self,
+        fund_code: str,
+        *,
+        now: datetime | None = None,
+    ) -> tuple[dict[str, Any] | None, bool]:
+        """读取持有人收益率分区。
+
+        返回 (值, 是否新鲜)。即便已过 TTL 也会返回旧值——它携带季度序列，
+        可作为增量承接的基线，只需补算新季度而无需重新下载全部季报 PDF。
+        """
+        current = self._now(now)
+        with self._file_lock(fund_code):
+            record = self._read_raw(fund_code)
+            if not isinstance(record, dict):
+                return None, False
+            entry = record.get("investor_return")
+            if not isinstance(entry, dict):
+                return None, False
+            cached_at = entry.get("cached_at")
+            value = entry.get("value")
+            if not isinstance(cached_at, str) or not isinstance(value, dict):
+                return None, False
+            try:
+                stored_at = datetime.fromisoformat(cached_at)
+            except ValueError:
+                return value, False
+            if stored_at.tzinfo is None:
+                stored_at = stored_at.replace(tzinfo=SHANGHAI_TZ)
+            age = (current - stored_at.astimezone(SHANGHAI_TZ)).total_seconds()
+            return value, age <= self.investor_return_ttl_seconds
+
+    def write_investor_return(
+        self,
+        fund_code: str,
+        value: dict[str, Any],
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        """写入持有人收益率分区，保留基金主体与其它分区。
+
+        与季度持仓分区一致，依附主体文件存在；无主体记录时跳过写入。
+        """
+        current = self._now(now)
+        with self._file_lock(fund_code):
+            record = self._read_raw(fund_code)
+            if (
+                not isinstance(record, dict)
+                or record.get("version") != self.VERSION
+                or not isinstance(record.get("payload"), dict)
+            ):
+                return
+            record["investor_return"] = {
+                "cached_at": current.isoformat(),
+                "value": value,
+            }
             self._write_record(fund_code, record)
 
     def defer_stale(

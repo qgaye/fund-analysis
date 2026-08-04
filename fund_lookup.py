@@ -506,6 +506,62 @@ def _extract_fund_company(
     return company
 
 
+def _build_scale_trend(
+    holder_structure: dict[str, Any],
+    nav_frame: pd.DataFrame,
+) -> list[dict[str, Any]]:
+    """把持有人结构各披露期与单位净值结合，得出每期净资产规模趋势。
+
+    机构/个人持有比例仅在半年报/年报披露，因此柱状图颗粒度为半年。
+    净资产 = 总份额（亿份）× 期末单位净值（元）= 亿元。
+    """
+    history = holder_structure.get("历史") or []
+    if not history:
+        return []
+
+    # 构建“日期 -> 单位净值”查询，取不晚于报告期的最近一个净值。
+    nav_points: list[tuple[str, float]] = []
+    if nav_frame is not None and not nav_frame.empty:
+        for _, row in nav_frame.iterrows():
+            nav_date = pd.to_datetime(row.get("净值日期"), errors="coerce")
+            nav_value = pd.to_numeric(row.get("单位净值"), errors="coerce")
+            if pd.isna(nav_date) or pd.isna(nav_value):
+                continue
+            nav_points.append((nav_date.strftime("%Y-%m-%d"), float(nav_value)))
+    nav_points.sort(key=lambda item: item[0])
+
+    def nav_as_of(target: str) -> float | None:
+        chosen: float | None = None
+        for nav_date, nav_value in nav_points:
+            if nav_date <= target:
+                chosen = nav_value
+            else:
+                break
+        return chosen
+
+    trend: list[dict[str, Any]] = []
+    for row in history:
+        report_date = row["报告期"]
+        shares = row["总份额"]
+        unit_nav = nav_as_of(report_date)
+        net_assets = (
+            round(shares * unit_nav, 2)
+            if None not in (shares, unit_nav)
+            else None
+        )
+        trend.append(
+            {
+                "报告期": report_date,
+                "净资产": net_assets,
+                "总份额": shares,
+                "单位净值": round(unit_nav, 4) if unit_nav is not None else None,
+                "机构持有比例": row["机构持有比例"],
+                "个人持有比例": row["个人持有比例"],
+            }
+        )
+    return trend
+
+
 def _extract_scale_details(
     overview: dict[str, Any], xq: dict[str, Any]
 ) -> dict[str, Any]:
@@ -548,8 +604,26 @@ def _extract_scale_details(
 
 def _parse_holder_structure(page_text: str) -> dict[str, Any]:
     """解析天天基金单只基金最新持有人结构。"""
-    row_match = re.search(
-        r"<tbody>\s*<tr>\s*"
+    rows = _parse_holder_history(page_text)
+    if not rows:
+        return {}
+    latest = rows[-1]
+    return {
+        "报告期": latest["报告期"],
+        "机构持有比例": latest["机构持有比例"],
+        "个人持有比例": latest["个人持有比例"],
+        "内部持有比例": latest["内部持有比例"],
+        "总份额": latest["总份额"],
+        "总份额单位": "亿份",
+        "说明": "内部持有比例为补充披露，不与机构、个人比例相加。",
+    }
+
+
+def _parse_holder_history(page_text: str) -> list[dict[str, Any]]:
+    """解析持有人结构表的全部披露期（半年报/年报），按日期升序返回。"""
+    rows: list[dict[str, Any]] = []
+    for match in re.finditer(
+        r"<tr>\s*"
         r"<td>(?P<date>\d{4}-\d{2}-\d{2})</td>\s*"
         r"<td[^>]*>(?P<institution>[\d.]+)%</td>\s*"
         r"<td[^>]*>(?P<individual>[\d.]+)%</td>\s*"
@@ -557,18 +631,18 @@ def _parse_holder_structure(page_text: str) -> dict[str, Any]:
         r"<td[^>]*>(?P<shares>[\d.]+)</td>",
         page_text,
         flags=re.DOTALL,
-    )
-    if not row_match:
-        return {}
-    return {
-        "报告期": row_match.group("date"),
-        "机构持有比例": float(row_match.group("institution")),
-        "个人持有比例": float(row_match.group("individual")),
-        "内部持有比例": float(row_match.group("internal")),
-        "总份额": float(row_match.group("shares")),
-        "总份额单位": "亿份",
-        "说明": "内部持有比例为补充披露，不与机构、个人比例相加。",
-    }
+    ):
+        rows.append(
+            {
+                "报告期": match.group("date"),
+                "机构持有比例": float(match.group("institution")),
+                "个人持有比例": float(match.group("individual")),
+                "内部持有比例": float(match.group("internal")),
+                "总份额": float(match.group("shares")),
+            }
+        )
+    rows.sort(key=lambda item: item["报告期"])
+    return rows
 
 
 def _load_holder_structure(
@@ -592,6 +666,9 @@ def _load_holder_structure(
     structure = _parse_holder_structure(response.text)
     if not structure:
         warnings.append("持有人结构获取失败：未找到最新披露数据。")
+        return structure
+    # 附带全部披露期，供规模趋势柱状图使用（机构/个人比例仅半年报/年报披露）。
+    structure["历史"] = _parse_holder_history(response.text)
     return structure
 
 
@@ -3678,6 +3755,12 @@ def get_fund_data(
 
     nav_history_frame = nav_frames["单位净值"]
     cumulative_nav_frame = nav_frames["累计净值"]
+    # 结合持有人结构披露期与单位净值，得出半年度净资产规模趋势（供柱状图）。
+    scale_details["规模趋势"] = _build_scale_trend(
+        holder_structure, nav_history_frame
+    )
+    # “历史”仅为构建趋势的中间数据，不对外暴露。
+    holder_structure.pop("历史", None)
     # 净值与区间业绩直接走单基金精确接口，复用上面已获取的净值走势
     # 与阶段业绩数据，无需再下载整张排行榜筛选目标基金。
     net_value, performance = _fallback_performance(

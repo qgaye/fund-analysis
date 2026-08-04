@@ -19,6 +19,8 @@ let currentQuarterReports = [];
 let currentReportArchive = [];
 let currentReportTypeNotes = {};
 let holdingsRequestId = 0;
+let currentInvestorReturn = null;
+let investorReturnRequestId = 0;
 let currentNavHistory = {};
 let currentNavRange = "1y";
 let currentNavMetric = "累计收益率";
@@ -374,6 +376,13 @@ const navMetricConfig = {
     note: "分红会使单位净值在除息日相应下降，本身不是额外收益；累计净值用于观察将历史现金分红加回后的走势。",
     tooltipLabel: "分红记录",
     unit: "元",
+  },
+  持有人收益: {
+    valueKey: "累计净值",
+    subtitle: "全体持有人按申赎现金流计算的金额加权收益率，反映“基民实际赚到没有”",
+    note: "金额加权收益率（XIRR）基于季报“开放式基金份额变动”表的申赎现金流，估值统一采用累计净值（复权）；申赎按季度净额、发生于季末近似处理。收益差距为负说明持有人跑输基金净值，多因追涨杀跌的择时行为。",
+    tooltipLabel: "持有人收益",
+    unit: "%",
   },
   周期收益: {
     valueKey: "累计净值",
@@ -1861,20 +1870,35 @@ function renderNavChart(
   const isDividendView = metric === "分红记录";
   const isPeriodicView = metric === "周期收益";
   const isStageView = metric === "阶段收益";
+  const isInvestorReturnView = metric === "持有人收益";
+  const investorReturnPanel = document.querySelector(
+    "#investor-return-panel",
+  );
   const isPanelView =
-    isDividendView || isPeriodicView || isStageView || isBullBearView;
+    isDividendView ||
+    isPeriodicView ||
+    isStageView ||
+    isBullBearView ||
+    isInvestorReturnView;
   customPanel.hidden = range !== "custom" || isPanelView;
   chartShell.hidden = isPanelView;
   dividendPanel.hidden = !isDividendView;
   periodicPanel.hidden = !isPeriodicView;
   stagePanel.hidden = !isStageView;
   bullBearPanel.hidden = !isBullBearView;
+  investorReturnPanel.hidden = !isInvestorReturnView;
   drawdownComparison.hidden = !isDrawdownView;
-  summary.hidden = isPeriodicView || isStageView || isDrawdownView || isBullBearView;
+  summary.hidden =
+    isPeriodicView ||
+    isStageView ||
+    isDrawdownView ||
+    isBullBearView ||
+    isInvestorReturnView;
   summary.classList.toggle("drawdown-summary", isDrawdownView);
   document.querySelector("#nav-range-switcher").hidden =
-    isPeriodicView || isStageView || isBullBearView;
-  document.querySelector("#track-benchmark-control").hidden = isBullBearView;
+    isPeriodicView || isStageView || isBullBearView || isInvestorReturnView;
+  document.querySelector("#track-benchmark-control").hidden =
+    isBullBearView || isInvestorReturnView;
   document.querySelector("#nav-chart-legend").hidden =
     !isBenchmarkCurveView;
   text(
@@ -1910,6 +1934,11 @@ function renderNavChart(
     ensureHs300Series().then(() => {
       if (currentNavMetric === "牛熊周期") renderBullBearCycles();
     });
+    return;
+  }
+  if (isInvestorReturnView) {
+    noData.hidden = true;
+    renderInvestorReturnPanel();
     return;
   }
   if (isStageView) {
@@ -4265,6 +4294,107 @@ function renderWarnings(warnings) {
   });
 }
 
+// 半年度净资产规模柱状图：柱高=净资产（亿元），柱内按机构/个人比例分色。
+// 默认展示最近 4 期，容器横向滚动查看更早期数；柱上不标数值（hover 提示）。
+function renderScaleTrend(trend) {
+  const block = document.querySelector("#scale-trend-block");
+  const scroll = document.querySelector("#scale-trend-scroll");
+  const chart = document.querySelector("#scale-trend-chart");
+  const rows = (trend ?? []).filter(
+    (row) => Number.isFinite(Number(row.净资产)),
+  );
+  chart.replaceChildren();
+  if (rows.length < 2) {
+    block.hidden = true;
+    return;
+  }
+  block.hidden = false;
+
+  // 每期一个固定像素宽度的槽位，让默认视口内约显示 4 期；其余靠横向滚动。
+  const visibleCount = 4;
+  const containerWidth = scroll.clientWidth || 360;
+  const slot = Math.max(containerWidth / visibleCount, 84);
+  const barWidth = slot * 0.66;
+  const height = 300;
+  const margin = { top: 18, bottom: 34 };
+  const plotHeight = height - margin.top - margin.bottom;
+  const totalWidth = slot * rows.length;
+  const maxAsset = Math.max(...rows.map((row) => Number(row.净资产)));
+
+  const svg = svgNode("svg", {
+    width: totalWidth,
+    height,
+    viewBox: `0 0 ${totalWidth} ${height}`,
+    class: "scale-trend-svg",
+  });
+
+  rows.forEach((row, index) => {
+    const asset = Number(row.净资产);
+    const barHeight = maxAsset > 0 ? (asset / maxAsset) * plotHeight : 0;
+    const x = slot * index + (slot - barWidth) / 2;
+    const yTop = margin.top + (plotHeight - barHeight);
+
+    const institution = Number(row.机构持有比例);
+    const individual = Number(row.个人持有比例);
+    const hasSplit =
+      Number.isFinite(institution) && Number.isFinite(individual);
+    // 机构在下、个人在上，按比例切分柱体高度。
+    const instRatio = hasSplit
+      ? institution / (institution + individual)
+      : 0;
+    const instHeight = barHeight * instRatio;
+
+    if (hasSplit && instHeight > 0) {
+      svg.append(
+        svgNode("rect", {
+          x,
+          y: yTop + (barHeight - instHeight),
+          width: barWidth,
+          height: instHeight,
+          class: "scale-bar-institution",
+        }),
+      );
+    }
+    svg.append(
+      svgNode("rect", {
+        x,
+        y: yTop,
+        width: barWidth,
+        height: hasSplit ? barHeight - instHeight : barHeight,
+        class: hasSplit ? "scale-bar-individual" : "scale-bar-plain",
+      }),
+    );
+
+    // 半年度标签：年末显示 H2、年中显示 H1。
+    const period = String(row.报告期 ?? "");
+    const isYearEnd = period.endsWith("12-31");
+    const dateLabel = svgNode("text", {
+      x: x + barWidth / 2,
+      y: height - margin.bottom + 20,
+      class: "scale-bar-date",
+      "text-anchor": "middle",
+    });
+    dateLabel.textContent = `${period.slice(2, 4)}${isYearEnd ? "H2" : "H1"}`;
+    svg.append(dateLabel);
+
+    const title = svgNode("title", {});
+    title.textContent =
+      `${period}：净资产 ${formatNumber(asset, 2)} 亿元` +
+      (hasSplit
+        ? ` · 机构 ${formatNumber(institution, 2)}% / 个人 ${formatNumber(individual, 2)}%`
+        : "");
+    svg.append(title);
+  });
+
+  chart.append(svg);
+  // 默认对齐到最右侧，展示最近 4 期（延后到布局完成后再滚动，避免容器尚未测量出宽度）。
+  const alignRight = () => {
+    scroll.scrollLeft = scroll.scrollWidth;
+  };
+  alignRight();
+  requestAnimationFrame(alignRight);
+}
+
 function renderFundProfile(basic) {
   const scale = basic.基金规模 ?? {};
   const holders = basic.持有人结构 ?? {};
@@ -4273,9 +4403,9 @@ function renderFundProfile(basic) {
   const redeemFee = basic.赎回费率 ?? {};
   const redeemRows = redeemFee.明细 ?? [];
 
-  text("#founded-date", basic.成立日期 ?? basic.成立日);
   text("#fund-age", basic.成立时间);
   text("#fund-scale", scale.最新净资产);
+  renderScaleTrend(scale.规模趋势);
   text("#profile-summary-age", basic.成立时间);
   const managerNames = (basic.基金经理?.现任 ?? [])
     .map((manager) => manager.姓名)
@@ -4310,23 +4440,11 @@ function renderFundProfile(basic) {
     `管理费 ${basic.管理费率 ?? "—"} + 托管费 ${basic.托管费率 ?? "—"} + 销售服务费 ${
       hasSalesServiceRate ? `${formatNumber(salesServiceRate, 3)}%（每年）` : "—"
     }`;
-  text(
-    "#fund-scale-date",
-    scale.净资产截止日 ? `截至 ${scale.净资产截止日}` : null,
-    "报告期暂无",
-  );
-  text("#fund-shares", scale.最新份额);
-  text("#founded-scale", scale.成立份额);
 
   const institution = Number(holders.机构持有比例);
   const individual = Number(holders.个人持有比例);
   const hasHolderData =
     Number.isFinite(institution) && Number.isFinite(individual);
-  text(
-    "#holder-period",
-    holders.报告期 ? `报告期 ${holders.报告期}` : null,
-    "报告期暂无",
-  );
   text(
     "#institution-share",
     hasHolderData ? `${formatNumber(institution, 2)}%` : null,
@@ -4334,35 +4452,6 @@ function renderFundProfile(basic) {
   text(
     "#individual-share",
     hasHolderData ? `${formatNumber(individual, 2)}%` : null,
-  );
-  document.querySelector("#institution-bar").style.width = hasHolderData
-    ? `${Math.max(institution, 0)}%`
-    : "0";
-  document.querySelector("#individual-bar").style.width = hasHolderData
-    ? `${Math.max(individual, 0)}%`
-    : "0";
-  document.querySelector("#holder-bar").classList.toggle(
-    "empty",
-    !hasHolderData,
-  );
-  document
-    .querySelector("#holder-bar")
-    .setAttribute(
-      "aria-label",
-      hasHolderData
-        ? `机构持有 ${institution.toFixed(2)}%，个人持有 ${individual.toFixed(2)}%`
-        : "暂无基金持有人结构",
-    );
-  text(
-    "#holder-note",
-    hasHolderData
-      ? `报告总份额 ${formatNumber(holders.总份额, 2)}${
-          holders.总份额单位 ?? "亿份"
-        } · 内部持有 ${formatNumber(holders.内部持有比例, 2)}% · ${
-          holders.说明 ?? "内部持有为补充披露。"
-        }`
-      : holders.说明,
-    "暂未取得该基金最新持有人结构。",
   );
 
   text("#purchase-fee-method", purchaseFee.收费方式, "费率暂无");
@@ -4750,11 +4839,144 @@ function renderShareClassAdvice(advice) {
   text("#share-class-note", advice.说明);
 }
 
+// 份额以“份”为单位，展示时折算为“亿份”便于阅读；signed 时带 +/− 号。
+function formatShares(value, { signed = false } = {}) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+    return "—";
+  }
+  const numeric = Number(value) / 1e8;
+  const sign = signed && numeric > 0 ? "+" : "";
+  return `${sign}${formatNumber(numeric, 2)} 亿份`;
+}
+
+function investorReturnValueCell(value, { detail } = {}) {
+  const cell = document.createElement("div");
+  cell.className = "investor-return-cell";
+  const strong = document.createElement("strong");
+  strong.textContent = formatPercent(value);
+  if (value !== null && value !== undefined && !Number.isNaN(Number(value))) {
+    strong.classList.add(Number(value) >= 0 ? "is-up" : "is-down");
+  }
+  cell.append(strong);
+  if (detail) {
+    const small = document.createElement("small");
+    small.textContent = detail;
+    cell.append(small);
+  }
+  return cell;
+}
+
+// 以列表形式一次性展示 近1年/近3年/近5年/成立以来 四个区间。
+const INVESTOR_RETURN_WINDOWS = ["近1年", "近3年", "近5年", "成立以来"];
+
+function renderInvestorReturnPanel() {
+  const status = document.querySelector("#investor-return-status");
+  const body = document.querySelector("#investor-return-body");
+  const list = document.querySelector("#investor-return-list");
+  const note = document.querySelector("#investor-return-window-note");
+
+  if (!currentInvestorReturn) {
+    // 仍在加载或无数据；fetchInvestorReturn 会更新 status。
+    body.hidden = true;
+    status.hidden = false;
+    return;
+  }
+
+  const windows = currentInvestorReturn.区间汇总 ?? {};
+  list.replaceChildren();
+
+  // 只展示有数据的区间；基金不足 3/5 年时，对应窗口后端已置空，直接跳过。
+  const available = INVESTOR_RETURN_WINDOWS.filter((key) => windows[key]);
+
+  if (available.length === 0) {
+    body.hidden = true;
+    status.hidden = false;
+    status.textContent = "该基金暂无可用于计算持有人收益率的季报份额数据。";
+    return;
+  }
+
+  available.forEach((windowKey) => {
+    const summary = windows[windowKey];
+    const row = document.createElement("div");
+    row.className = "investor-return-row";
+
+    const label = document.createElement("div");
+    label.className = "investor-return-window-label";
+    const name = document.createElement("strong");
+    name.textContent = windowKey;
+    label.append(name);
+    const span = document.createElement("span");
+    span.textContent = `${summary.起始报告期 ?? "—"} ～ ${summary.结束报告期 ?? "—"} · ${summary.季度数 ?? 0} 季`;
+    label.append(span);
+    row.append(label);
+
+    const holder = summary.持有人收益率 ?? {};
+    const nav = summary.基金净值收益率 ?? {};
+    const gap = summary.行为差距 ?? {};
+    const share = summary.份额变化 ?? {};
+
+    row.append(
+      investorReturnValueCell(holder.年化, {
+        detail: `累计 ${formatPercent(holder.累计)}`,
+      }),
+      investorReturnValueCell(nav.年化, {
+        detail: `累计 ${formatPercent(nav.累计)}`,
+      }),
+      investorReturnValueCell(gap.年化, { detail: "持有人 − 净值" }),
+      investorReturnValueCell(share.净申赎比例, {
+        detail:
+          share.净申赎份额 != null
+            ? `净${Number(share.净申赎份额) >= 0 ? "申购" : "赎回"} ${formatShares(Math.abs(Number(share.净申赎份额)))}`
+            : "占期初份额",
+      }),
+    );
+    list.append(row);
+  });
+
+  status.hidden = true;
+  body.hidden = false;
+  note.textContent =
+    "收益差距为负说明持有人整体跑输基金净值，多因追涨杀跌的择时行为；净申赎为区间内各季申购减赎回的加总（相对期初份额），正为净申购、负为净赎回，反映申赎行为本身。";
+}
+
+async function fetchInvestorReturn(code) {
+  const status = document.querySelector("#investor-return-status");
+  const body = document.querySelector("#investor-return-body");
+  body.hidden = true;
+  status.hidden = false;
+  status.textContent = "正在计算持有人收益率（首次需下载历年季报，请稍候）…";
+  currentInvestorReturn = null;
+
+  investorReturnRequestId += 1;
+  const requestId = investorReturnRequestId;
+  try {
+    const response = await fetch(`/api/funds/${code}/investor-return`);
+    const payload = await response.json();
+    if (requestId !== investorReturnRequestId || currentCode !== code) return;
+    if (!response.ok) {
+      throw new Error(payload.detail || `HTTP ${response.status}`);
+    }
+    if (!payload.可用) {
+      status.textContent = "该基金暂无可用于计算持有人收益率的季报份额数据。";
+      return;
+    }
+    currentInvestorReturn = payload;
+    // 只有当用户当前正停留在“持有人收益”标签时才立即绘制。
+    if (currentNavMetric === "持有人收益") {
+      renderInvestorReturnPanel();
+    }
+  } catch (error) {
+    if (requestId !== investorReturnRequestId || currentCode !== code) return;
+    status.hidden = false;
+    body.hidden = true;
+    status.textContent = `持有人收益率计算失败：${error.message}`;
+  }
+}
+
 function renderFund(data) {
   const basic = data.基础资料 ?? {};
   const performance = data.历史业绩 ?? {};
   const source = data.数据来源 ?? {};
-
   currentFundSnapshot = {
     code: basic.代码 ?? currentCode,
     name: basic.名称 ?? "",
@@ -4822,6 +5044,8 @@ async function queryFund(code, refresh = false) {
 
   clearInputError();
   holdingsRequestId += 1;
+  investorReturnRequestId += 1;
+  currentInvestorReturn = null;
   currentCode = code;
   codeInput.value = code;
   refreshButton.disabled = true;
@@ -5654,9 +5878,14 @@ document.querySelectorAll("[data-nav-range]").forEach((button) => {
 });
 
 document.querySelectorAll("[data-nav-metric]").forEach((button) => {
-  button.addEventListener("click", () =>
-    renderNavChart(currentNavRange, button.dataset.navMetric),
-  );
+  button.addEventListener("click", () => {
+    const metric = button.dataset.navMetric;
+    renderNavChart(currentNavRange, metric);
+    // 持有人收益率计算较慢（需下载历年季报），切到该标签时再懒加载。
+    if (metric === "持有人收益" && currentCode && !currentInvestorReturn) {
+      void fetchInvestorReturn(currentCode);
+    }
+  });
 });
 
 document.querySelectorAll("[data-periodic-unit]").forEach((button) => {

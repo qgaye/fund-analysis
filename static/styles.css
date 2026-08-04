@@ -2554,6 +2554,82 @@ main {
   border-bottom: 0;
 }
 
+/* ---- 半年度净资产规模趋势柱状图 ---- */
+.scale-trend-block {
+  margin-top: 0;
+}
+
+.scale-trend-legend {
+  display: inline-flex;
+  gap: 14px;
+  font-size: 9px;
+  color: var(--muted);
+}
+
+.scale-trend-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.scale-trend-legend i {
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--ink);
+}
+
+.scale-legend-inst i {
+  background: var(--ink);
+}
+
+.scale-legend-indiv i {
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(21, 25, 22, 0.08) 0 1px,
+      transparent 1px 5px
+    ),
+    var(--acid);
+}
+
+.scale-trend-chart {
+  min-width: min-content;
+}
+
+.scale-trend-scroll {
+  margin-top: 16px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.scale-trend-svg {
+  display: block;
+  height: auto;
+  overflow: visible;
+}
+
+.scale-bar-institution {
+  fill: var(--ink);
+}
+
+.scale-bar-individual {
+  fill: var(--acid);
+  stroke: var(--ink);
+  stroke-width: 0.6;
+}
+
+.scale-bar-plain {
+  fill: var(--muted);
+}
+
+.scale-bar-date {
+  fill: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+
 .profile-people-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(330px, 0.65fr);
@@ -7850,6 +7926,127 @@ body:has(.utility-dialog[open]) {
 
   .bull-bear-info-list {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ---- 持有人收益（净值与收益全景内的一个 tab） ---- */
+.investor-return-panel {
+  margin-top: 8px;
+}
+
+.investor-return-status {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font: 500 12px/1.6 var(--mono);
+}
+
+.investor-return-scroll {
+  overflow-x: auto;
+  scrollbar-color: var(--line-strong) transparent;
+  scrollbar-width: thin;
+}
+
+.investor-return-list-heading,
+.investor-return-row {
+  display: grid;
+  align-items: center;
+  gap: 14px;
+  grid-template-columns:
+    minmax(140px, 1.2fr)
+    repeat(4, minmax(120px, 1fr));
+  min-width: 760px;
+}
+
+.investor-return-list-heading {
+  padding: 0 4px 10px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.investor-return-list-heading span:not(:first-child) {
+  text-align: right;
+}
+
+.investor-return-list {
+  border-bottom: 1px solid var(--line);
+}
+
+.investor-return-row {
+  padding: 15px 4px;
+  border-bottom: 1px solid var(--line);
+  animation: reveal 420ms ease both;
+}
+
+.investor-return-row:last-child {
+  border-bottom: 0;
+}
+
+.investor-return-window-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.investor-return-window-label strong {
+  font-family: var(--body);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.investor-return-window-label span {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+
+.investor-return-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+  text-align: right;
+}
+
+.investor-return-cell strong {
+  font-family: var(--mono);
+  font-size: clamp(17px, 1.6vw, 23px);
+  font-weight: 500;
+  letter-spacing: -0.04em;
+}
+
+.investor-return-cell strong.is-up {
+  color: var(--red);
+}
+
+.investor-return-cell strong.is-down {
+  color: var(--green);
+}
+
+.investor-return-cell small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.investor-return-window-note {
+  margin: 16px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.7;
+  max-width: 760px;
+}
+
+@media (max-width: 720px) {
+  .investor-return-list-heading,
+  .investor-return-row {
+    grid-template-columns:
+      minmax(120px, 1.1fr)
+      repeat(4, minmax(96px, 1fr));
+    min-width: 640px;
   }
 }
 

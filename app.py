@@ -39,6 +39,7 @@ from fund_lookup import (
     search_funds,
     warm_fund_search_index,
 )
+from fund_investor_return import compute_investor_return
 from stock_cache import StockFileCache
 from stock_lookup import StockLookupError, get_stock_data
 from watchlist_store import (
@@ -66,6 +67,7 @@ _fund_file_cache = FundFileCache(
 )
 _fund_request_locks: dict[str, asyncio.Lock] = {}
 _fund_holdings_request_locks: dict[str, asyncio.Lock] = {}
+_fund_investor_return_locks: dict[str, asyncio.Lock] = {}
 _benchmark_file_cache = BenchmarkFileCache(
     BASE_DIR / ".cache" / "benchmarks",
 )
@@ -702,6 +704,72 @@ async def fund_holdings_by_period(
 
         # 写入基金同一文件的季度持仓分区；若主体尚未缓存则跳过写入（依附主体存在）。
         _fund_file_cache.write_holdings_period(code, period_key, result)
+        return JSONResponse(
+            jsonable_encoder(result),
+            headers={"X-Cache": "MISS"},
+        )
+
+
+@app.get(
+    "/api/funds/{fund_code}/investor-return",
+    summary="基金持有人收益率（金额加权）",
+    response_description=(
+        "季度维度的持有人收益率、基金净值收益率、行为差距与份额变化，"
+        "并聚合近 1 年 / 3 年 / 5 年 / 成立以来"
+    ),
+)
+async def fund_investor_return(
+    fund_code: str,
+    refresh: bool = Query(
+        default=False,
+        description="跳过缓存并重新计算（仍会增量复用已缓存季度序列）",
+    ),
+) -> JSONResponse:
+    code = fund_code.strip()
+    if not re.fullmatch(r"\d{6}", code):
+        raise HTTPException(
+            status_code=422,
+            detail="基金代码必须是 6 位数字，例如 000001。",
+        )
+
+    if not refresh:
+        cached, fresh = _fund_file_cache.read_investor_return(code)
+        if cached is not None and fresh:
+            return JSONResponse(
+                jsonable_encoder(cached),
+                headers={"X-Cache": "HIT"},
+            )
+
+    lock = _fund_investor_return_locks.setdefault(code, asyncio.Lock())
+    async with lock:
+        # 抢到锁后复查缓存：并发的相同请求只需第一个真正计算。
+        if not refresh:
+            cached, fresh = _fund_file_cache.read_investor_return(code)
+            if cached is not None and fresh:
+                return JSONResponse(
+                    jsonable_encoder(cached),
+                    headers={"X-Cache": "HIT"},
+                )
+
+        # 复用旧序列做增量承接：只下载尚未收录的新季度 PDF，避免全量重算。
+        previous, _ = _fund_file_cache.read_investor_return(code)
+        existing_series = (previous or {}).get("季度序列") if previous else None
+
+        try:
+            result = await run_in_threadpool(
+                compute_investor_return,
+                code,
+                existing=existing_series,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"持有人收益率计算失败：{exc}",
+            ) from exc
+
+        _fund_file_cache.write_investor_return(code, result)
         return JSONResponse(
             jsonable_encoder(result),
             headers={"X-Cache": "MISS"},
