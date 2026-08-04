@@ -181,7 +181,8 @@ searchInput.addEventListener("input", () => {
     setFeedback("");
     return;
   }
-  searchTimer = window.setTimeout(() => performSearch(query), 180);
+  // 提高防抖间隔，减少低配服务端上的并发请求排队。
+  searchTimer = window.setTimeout(() => performSearch(query), 400);
 });
 
 searchInput.addEventListener("keydown", (event) => {

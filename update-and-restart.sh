@@ -7,7 +7,20 @@ PROJECT="/root/fund-analysis"
 PYTHON="$PROJECT/.venv311/bin/python"
 PID_FILE="$PROJECT/uvicorn.pid"
 APP_LOG="$PROJECT/uvicorn.log"
+
+# 运行参数默认值，可被 service.conf 覆盖。
 PORT="8765"
+WORKERS="1"
+
+# 读取配置文件（存在才加载），用于调整端口 / worker 数等运行参数。
+CONF_FILE="$PROJECT/service.conf"
+if [[ -f "$CONF_FILE" ]]; then
+    # shellcheck source=/dev/null
+    source "$CONF_FILE"
+fi
+
+# 兜底校验：WORKERS 必须是正整数，否则回退为 1。
+[[ "$WORKERS" =~ ^[1-9][0-9]*$ ]] || WORKERS="1"
 
 # 防止上一次检查还没结束，下一次又启动
 exec 9>/tmp/fund-analysis-update.lock
@@ -57,6 +70,7 @@ start_service() {
     nohup "$PYTHON" -m uvicorn app:app \
         --host 0.0.0.0 \
         --port "$PORT" \
+        --workers "$WORKERS" \
         9>&- \
         >> "$APP_LOG" 2>&1 &
 
@@ -66,7 +80,7 @@ start_service() {
     sleep 2
 
     if is_our_process "$new_pid"; then
-        log "服务启动成功，PID=$new_pid"
+        log "服务启动成功，PID=$new_pid，端口=$PORT，workers=$WORKERS"
     else
         log "服务启动失败，请查看 $APP_LOG"
         return 1

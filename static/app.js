@@ -5544,7 +5544,8 @@ codeInput.addEventListener("input", () => {
     hideFundSearchSuggestions();
     return;
   }
-  fundSearchTimer = setTimeout(() => performFundSearch(query), 180);
+  // 提高防抖间隔，减少低配服务端上的并发请求排队。
+  fundSearchTimer = setTimeout(() => performFundSearch(query), 400);
 });
 
 codeInput.addEventListener("keydown", (event) => {

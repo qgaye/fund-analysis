@@ -37,6 +37,7 @@ from fund_lookup import (
     get_fund_data,
     get_fund_holdings_by_period,
     search_funds,
+    warm_fund_search_index,
 )
 from stock_cache import StockFileCache
 from stock_lookup import StockLookupError, get_stock_data
@@ -75,6 +76,15 @@ _stock_file_cache = StockFileCache(
 _stock_request_locks: dict[str, asyncio.Lock] = {}
 _watchlist_store = WatchlistFileStore(BASE_DIR / ".data" / "watchlist.json")
 WATCHLIST_TAG_SUGGESTIONS = ["持有中", "红利", "固收+", "成长", "价值", "低波"]
+
+
+@app.on_event("startup")
+async def _warm_search_index() -> None:
+    """启动预热：后台构建搜索索引，避免首个搜索请求被阻塞。
+
+    放到线程池并且不 await，服务能立即接收请求；预热完成后首查即命中缓存。
+    """
+    asyncio.create_task(run_in_threadpool(warm_fund_search_index))
 
 
 class WatchlistFundInput(BaseModel):

@@ -920,6 +920,63 @@ def _fund_search_catalog_for(month_tag: str) -> tuple[dict[str, str], ...]:
     return tuple(catalog)
 
 
+@lru_cache(maxsize=2)
+def _fund_search_index_for(
+    month_tag: str,
+) -> tuple[tuple[dict[str, str], ...], dict[str, frozenset[int]]]:
+    """预计算搜索目录 + 字符倒排索引，避免每次查询全表线性扫描。
+
+    对每条基金拼出可搜索文本（代码 / 名称 / 拼音缩写 / 拼音全称），
+    建立“字符 -> 命中的条目下标集合”的倒排表。任一命中层级都要求查询串
+    的全部字符出现在这四个字段之一，因此“同时包含全部查询字符”的条目
+    必然是候选超集；查询时只对这批候选做详细打分，结果与全表扫描一致。
+    """
+    catalog = _fund_search_catalog_for(month_tag)
+    postings: dict[str, set[int]] = {}
+    for index, item in enumerate(catalog):
+        blob = (
+            item["code_search"]
+            + item["name_search"]
+            + item["pinyin_short"]
+            + item["pinyin_full"]
+        )
+        for character in set(blob):
+            postings.setdefault(character, set()).add(index)
+    frozen = {character: frozenset(ids) for character, ids in postings.items()}
+    return catalog, frozen
+
+
+def _score_fund_item(
+    normalized: str, item: dict[str, str]
+) -> tuple[int, int, int, str] | None:
+    """对单条基金按代码 / 名称 / 拼音的匹配质量打分，越小越靠前。"""
+
+    code = item["code_search"]
+    name = item["name_search"]
+    pinyin_short = item["pinyin_short"]
+    pinyin_full = item["pinyin_full"]
+
+    if normalized == code or normalized == name:
+        return (0, 0, len(name), code)
+    if code.startswith(normalized):
+        return (1, 0, len(code) - len(normalized), code)
+    if name.startswith(normalized):
+        return (1, 1, len(name) - len(normalized), code)
+    if normalized in name:
+        return (2, name.index(normalized), len(name), code)
+    if pinyin_short.startswith(normalized):
+        return (3, 0, len(pinyin_short), code)
+    if pinyin_full.startswith(normalized):
+        return (3, 1, len(pinyin_full), code)
+    if normalized in pinyin_short or normalized in pinyin_full:
+        return (4, 0, len(name), code)
+    if len(normalized) >= 2:
+        gap = _subsequence_gap(normalized, name)
+        if gap is not None:
+            return (5, gap, len(name), code)
+    return None
+
+
 def search_funds(query: str, limit: int = 10) -> dict[str, Any]:
     """在月度本地基金名录中按代码、中文名称或拼音做模糊搜索。"""
 
@@ -927,33 +984,27 @@ def search_funds(query: str, limit: int = 10) -> dict[str, Any]:
     if not normalized:
         return {"基金": [], "匹配总数": 0, "目录月份": None}
     month_tag = datetime.now().strftime("%Y%m")
+    catalog, postings = _fund_search_index_for(month_tag)
+
+    # 用字符倒排表求候选：从最稀有的字符集合出发做交集，快速缩小扫描范围。
+    unique_chars = set(normalized)
+    posting_sets: list[frozenset[int]] = []
+    for character in unique_chars:
+        ids = postings.get(character)
+        if not ids:
+            return {"基金": [], "匹配总数": 0, "目录月份": month_tag}
+        posting_sets.append(ids)
+    posting_sets.sort(key=len)
+    candidate_ids: frozenset[int] | set[int] = posting_sets[0]
+    for ids in posting_sets[1:]:
+        candidate_ids = candidate_ids & ids
+        if not candidate_ids:
+            break
+
     matches: list[tuple[tuple[int, int, int, str], dict[str, str]]] = []
-    for item in _fund_search_catalog_for(month_tag):
-        code = item["code_search"]
-        name = item["name_search"]
-        pinyin_short = item["pinyin_short"]
-        pinyin_full = item["pinyin_full"]
-        score: tuple[int, int, int, str] | None = None
-
-        if normalized == code or normalized == name:
-            score = (0, 0, len(name), code)
-        elif code.startswith(normalized):
-            score = (1, 0, len(code) - len(normalized), code)
-        elif name.startswith(normalized):
-            score = (1, 1, len(name) - len(normalized), code)
-        elif normalized in name:
-            score = (2, name.index(normalized), len(name), code)
-        elif pinyin_short.startswith(normalized):
-            score = (3, 0, len(pinyin_short), code)
-        elif pinyin_full.startswith(normalized):
-            score = (3, 1, len(pinyin_full), code)
-        elif normalized in pinyin_short or normalized in pinyin_full:
-            score = (4, 0, len(name), code)
-        elif len(normalized) >= 2:
-            gap = _subsequence_gap(normalized, name)
-            if gap is not None:
-                score = (5, gap, len(name), code)
-
+    for index in candidate_ids:
+        item = catalog[index]
+        score = _score_fund_item(normalized, item)
         if score is not None:
             matches.append((score, item))
 
@@ -971,6 +1022,20 @@ def search_funds(query: str, limit: int = 10) -> dict[str, Any]:
         "匹配总数": len(matches),
         "目录月份": month_tag,
     }
+
+
+def warm_fund_search_index() -> int:
+    """预热搜索索引：确保当月名录缓存就绪并构建倒排索引。
+
+    在服务启动时调用，避免首个搜索请求阻塞在名录下载 / 索引构建上。
+    返回目录条目数，失败时返回 0（不抛异常，不影响服务启动）。
+    """
+    try:
+        month_tag = datetime.now().strftime("%Y%m")
+        catalog, _ = _fund_search_index_for(month_tag)
+        return len(catalog)
+    except Exception:
+        return 0
 
 
 # A / C 后缀识别：匹配名称结尾的份额类别标记，如 “……混合A”“……债券C”。
