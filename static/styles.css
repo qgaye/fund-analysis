@@ -7416,13 +7416,41 @@ body:has(.utility-dialog[open]) {
 
   .watchlist-card {
     grid-template-columns: 1fr;
-    padding-block: 5px 16px;
+    padding-block: 0;
   }
 
   .watchlist-card-main {
-    grid-template-columns: 30px minmax(0, 1fr);
-    gap: 10px;
-    padding-right: 0;
+    grid-template-columns: 26px minmax(0, 1fr);
+    gap: 3px 10px;
+    padding: 12px 92px 12px 0;
+  }
+
+  .watchlist-order {
+    grid-row: 1 / span 2;
+    align-self: center;
+    font-size: 9px;
+  }
+
+  .watchlist-identity strong {
+    font-size: 16px;
+  }
+
+  .watchlist-identity small {
+    margin-top: 2px;
+    font-size: 9px;
+  }
+
+  .watchlist-tags {
+    grid-column: 2;
+    justify-self: start;
+    margin-top: 2px;
+    gap: 4px;
+  }
+
+  .watchlist-tags .watchlist-tag {
+    min-height: 22px;
+    padding: 0 7px;
+    font-size: 8px;
   }
 
   .watchlist-category {
@@ -7430,13 +7458,24 @@ body:has(.utility-dialog[open]) {
     justify-self: start;
   }
 
+  /* 操作按钮浮到卡片右上角，避免独占一整行，进一步压缩卡片高度。 */
   .watchlist-card-controls {
-    padding-left: 40px;
+    position: absolute;
+    top: 12px;
+    right: 0;
+    padding-left: 0;
+    gap: 4px;
+  }
+
+  .watchlist-card-controls button {
+    min-height: 26px;
+    padding: 0 8px;
+    font-size: 8px;
   }
 
   .watchlist-editor {
     grid-template-columns: 1fr;
-    margin: 14px 0 4px 40px;
+    margin: 8px 0 12px 36px;
   }
 
   .watchlist-empty {

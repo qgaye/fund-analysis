@@ -8,30 +8,9 @@ const watchlistRefreshButton = document.querySelector("#watchlist-refresh");
 let watchlistData = { 基金: [], 总数: 0, 标签建议: [] };
 let watchlistActiveTag = "全部";
 
-const WATCHLIST_TAG_TONES = new Map([
-  ["全部", "all"],
-  ["持有中", "holding"],
-  ["债基", "bond"],
-  ["固收+", "bond"],
-  ["偏股", "equity"],
-  ["股票", "equity"],
-  ["指数", "index"],
-  ["成长", "growth"],
-  ["价值", "value"],
-  ["红利", "dividend"],
-  ["低波", "low-risk"],
-  ["货币", "cash"],
-  ["QDII", "global"],
-  ["FOF", "global"],
-]);
-
 function watchlistTagTone(tag) {
-  const value = String(tag || "");
-  const knownTone = WATCHLIST_TAG_TONES.get(value);
-  if (knownTone) return knownTone;
-  let hash = 0;
-  for (const character of value) hash = (hash * 31 + character.codePointAt(0)) >>> 0;
-  return `custom-${hash % 4}`;
+  // 仅“持有中”保留高亮配色，其余标签统一使用默认中性色。
+  return String(tag || "") === "持有中" ? "holding" : "default";
 }
 
 function applyWatchlistTagTone(element, tag) {
