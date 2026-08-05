@@ -4828,7 +4828,7 @@ function renderShareClassAdvice(advice) {
       const value = document.createElement("strong");
       value.textContent = formatCostRange(period, share);
       const breakdown = document.createElement("small");
-      breakdown.textContent = `申购 ${formatNumber(period[`${share}申购费率`], 3)}% + 赎回 ${formatNumber(period[`${share}赎回费率`], 3)}%`;
+      breakdown.textContent = `申购 ${formatNumber(period[`${share}申购费率`], 3)}% + 赎回 ${formatNumber(period[`${share}赎回费率`], 3)}% + 服务费 ${formatNumber(period[`${share}销售服务费率`], 3)}%/年`;
       cost.append(label, value, breakdown);
       costs.append(cost);
     });
