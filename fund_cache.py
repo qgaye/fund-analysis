@@ -29,11 +29,11 @@ class FundFileCache:
         self,
         directory: Path,
         *,
-        refresh_hour: int = 15,
-        refresh_minute: int = 30,
+        refresh_hour: int = 20,
+        refresh_minute: int = 0,
         stale_retry_minutes: int = 30,
-        holdings_ttl_seconds: int = 10 * 60,
-        investor_return_ttl_seconds: int = 24 * 60 * 60,
+        holdings_ttl_seconds: int = 7 * 24 * 60 * 60,
+        investor_return_ttl_seconds: int = 7 * 24 * 60 * 60,
     ) -> None:
         self.directory = directory
         self.refresh_hour = refresh_hour

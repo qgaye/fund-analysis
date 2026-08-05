@@ -25,8 +25,8 @@ class StockFileCache:
         self,
         directory: Path,
         *,
-        refresh_hour: int = 15,
-        refresh_minute: int = 30,
+        refresh_hour: int = 18,
+        refresh_minute: int = 0,
         stale_retry_minutes: int = 30,
     ) -> None:
         self.directory = directory

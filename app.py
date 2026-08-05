@@ -51,7 +51,7 @@ from watchlist_store import (
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-CACHE_TTL_SECONDS = 10 * 60
+CACHE_TTL_SECONDS = 7 * 24 * 60 * 60  # 季度持仓按季度披露，7 天足够覆盖回补窗口
 FUND_HOLDINGS_LIMIT = 20
 
 app = FastAPI(

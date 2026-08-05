@@ -47,19 +47,19 @@ class FundFileCacheTests(unittest.TestCase):
 
         self.assertEqual(
             record["next_refresh_at"],
-            "2026-07-24T15:30:00+08:00",
+            "2026-07-24T20:00:00+08:00",
         )
         self.assertEqual(
             self.cache.state(
                 record,
-                now=friday_morning.replace(hour=15, minute=29),
+                now=friday_morning.replace(hour=19, minute=59),
             ),
             "FRESH",
         )
         self.assertEqual(
             self.cache.state(
                 record,
-                now=friday_morning.replace(hour=15, minute=30),
+                now=friday_morning.replace(hour=20, minute=0),
             ),
             "EXPIRED",
         )
@@ -69,13 +69,13 @@ class FundFileCacheTests(unittest.TestCase):
             2026,
             7,
             24,
-            16,
+            21,
             tzinfo=SHANGHAI_TZ,
         )
 
         self.assertEqual(
             self.cache.next_refresh(friday_after_close).isoformat(),
-            "2026-07-27T15:30:00+08:00",
+            "2026-07-27T20:00:00+08:00",
         )
 
     def test_stale_record_retries_after_backoff(self) -> None:
